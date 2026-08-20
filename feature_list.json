@@ -20,7 +20,7 @@
     {
       "id": "F2",
       "title": "brief-init skill：首次設定",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "acceptance": [
         "執行 /brief-init 會建立 ~/.agent-brief/，內含 inbox.jsonl 與 answers.jsonl（建立時為空）及初始內容恰為 {\"projects\": [], \"collector\": null, \"notify\": null} 的 config.json。collector 與 notify 非 null 時皆為 argv 陣列；notify 執行時在陣列尾端依序附加 project 與 title 兩個參數。對既有安裝重跑不截斷、不覆寫既有資料，並明說略過。",

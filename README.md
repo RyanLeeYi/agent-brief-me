@@ -8,7 +8,7 @@ session live.
 
 The daily loop:
 
-1. **Before bed**, run `/brief`. It shows unread reports, walks you through
+1. **Before bed**, run `/brief-me`. It shows unread reports, walks you through
    pending questions grouped by project (high severity first), then offers
    to dispatch a headless follow-up session for any project that has a
    fresh, unconsumed answer.
@@ -16,10 +16,10 @@ The daily loop:
    session, carrying its unconsumed answers, spawned by
    `scripts/dispatch.py`.
 3. **Sleep**, while the dispatched sessions keep working unattended.
-4. **In the morning**, run `/brief` again to review what came in overnight
+4. **In the morning**, run `/brief-me` again to review what came in overnight
    and answer whatever is still pending.
 
-The only command you run day to day is `/brief`.
+The only command you run day to day is `/brief-me`.
 
 Two honest limitations:
 
@@ -42,20 +42,20 @@ git clone https://github.com/RyanLeeYi/agent-brief-me.git ~/.claude/skills/agent
 Start (or restart) a Claude Code session anywhere, then run:
 
 ```
-/agent-brief-me:init
+/agent-brief-me:brief-init
 ```
 
 to create `~/.agent-brief/` and register the projects you want tracked.
-From then on, day to day, run `/agent-brief-me:brief` (called `/brief`
+From then on, day to day, run `/agent-brief-me:brief-me` (called `/brief-me`
 throughout the rest of this README). To confirm the install itself, run
 `claude plugin list`; a working install lists `agent-brief-me@skills-dir`
 under "Skills-directory plugins".
 
 ## Skills
 
-- `init` -- one-time, idempotent setup: creates `~/.agent-brief/`,
+- `brief-init` -- one-time, idempotent setup: creates `~/.agent-brief/`,
   registers projects, and runs a smoke test.
-- `brief` -- the daily review pass: unread reports, pending questions,
+- `brief-me` -- the daily review pass: unread reports, pending questions,
   optional dispatch.
 - `brief-submit` -- used by dispatched sessions themselves (not by you
   directly) to file a question or a report into the inbox without blocking.
@@ -63,12 +63,12 @@ under "Skills-directory plugins".
 ## Collector hook
 
 `~/.agent-brief/config.json`'s `collector` field is an argv array. When set,
-every `/brief` run executes it (cwd `~/.agent-brief`) before reading the
+every `/brief-me` run executes it (cwd `~/.agent-brief`) before reading the
 inbox, so it can pull structured to-dos from any source and file them as
 `question` or `report` records per `docs/schema.md`'s atomic append rule
 (append-mode open, hold an exclusive lock, write the whole line in a single
 `write()` call, release the lock -- see the `atomic_append_line` helper in
-`docs/schema.md`). A non-zero exit is reported as a warning; `/brief`
+`docs/schema.md`). A non-zero exit is reported as a warning; `/brief-me`
 proceeds regardless.
 
 Generic example: file every line of a plain-text to-do list as a
@@ -129,7 +129,7 @@ Your script then receives e.g. `send-telegram.py my-project "prod deploy blocked
 ## Teaching your agents to use the inbox
 
 Dispatched sessions only use the inbox if their instructions say so.
-`init` prints a one-paragraph protocol sentence (use `brief-submit`
+`brief-init` prints a one-paragraph protocol sentence (use `brief-submit`
 when blocked on a user decision, and once more before finishing to report
 what was done) and offers to append it to a rules file you name -- your
 global instructions file is the usual target. Sessions spawned by

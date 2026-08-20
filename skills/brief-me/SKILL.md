@@ -1,9 +1,9 @@
 ---
-name: brief
-description: Batch-review the agent-brief inbox - show unread reports, walk pending questions grouped by project and severity via AskUserQuestion, then offer to dispatch headless sessions for projects with unconsumed answers. Use when the user runs /brief or asks to review, check, or triage the agent-brief inbox.
+name: brief-me
+description: Batch-review the agent-brief inbox - show unread reports, walk pending questions grouped by project and severity via AskUserQuestion, then offer to dispatch headless sessions for projects with unconsumed answers. Use when the user runs /brief-me or asks to review, check, or triage the agent-brief inbox.
 ---
 
-# brief
+# brief-me
 
 Runs one review pass over `~/.agent-brief/inbox.jsonl` and
 `~/.agent-brief/answers.jsonl`. Fixed order, run every step in sequence
@@ -19,7 +19,7 @@ Every write below follows the atomic append rule in `docs/schema.md`:
 append-mode open, hold an OS-level exclusive lock, write the whole line in a
 single `write()` call, release the lock. Nothing in this skill ever rewrites
 or truncates an existing line - state is always derived by folding the file,
-never stored separately, which is also why leaving `/brief` early is safe
+never stored separately, which is also why leaving `/brief-me` early is safe
 (see "Mid-session exit" at the end).
 
 ## Reference implementation
@@ -27,7 +27,7 @@ never stored separately, which is also why leaving `/brief` early is safe
 Run this as a throwaway script (or `python3 -c "..."`), calling the pieces
 described in each step below. `atomic_append_line` mirrors
 `tests/test_concurrent_append.py`'s helper and the copy in
-`skills/init/SKILL.md` / `skills/brief-submit/SKILL.md` verbatim.
+`skills/brief-init/SKILL.md` / `skills/brief-me-submit/SKILL.md` verbatim.
 
 ```python
 import json
@@ -238,7 +238,7 @@ def unconsumed_projects(questions, answers_by_question):
 Compute `brief_home = get_brief_home()`. Call `run_collector(brief_home)`
 *before* touching the inbox at all. If it returns a non-`None` string,
 report that failure to the user as a warning; either way, proceed to Step 1
-regardless of the result - a failing collector never stops `/brief`.
+regardless of the result - a failing collector never stops `/brief-me`.
 
 ## Step 1: Fold the inbox, check for empty
 
@@ -292,7 +292,7 @@ For each question, in order:
    through the tool itself.
 3. Read what the user did:
    - **They picked "Skip"** - append nothing to either file. The question
-     stays pending and will be presented again on the next `/brief` run.
+     stays pending and will be presented again on the next `/brief-me` run.
      Move on to the next question.
    - **They picked one of the other listed options** - that option's exact
      text is the answer's `chosen` value.
@@ -342,17 +342,17 @@ project checkouts.
 Nothing extra to implement for this: every write in this skill is a single
 atomic append, and current state is always re-derived by folding the files
 (see `docs/schema.md`, "Deriving current state"), never stored elsewhere. If
-`/brief` is interrupted (or the user closes the session) between two
+`/brief-me` is interrupted (or the user closes the session) between two
 questions, or before Step 4 finishes asking about every project, no
 in-progress state is lost:
 
 - Any question not yet reached, or reached and left without an answer
   because Skip was picked, has no `status` line for it and is still
-  `pending` - it appears again, unchanged, the next time `/brief` runs.
+  `pending` - it appears again, unchanged, the next time `/brief-me` runs.
 - Any report already shown got its `read` status line appended right after
   it was displayed (Step 2), so it will not reappear even if the run is cut
   short afterward.
 - Any answer already appended is already durably on disk with
-  `consumed: false`; a later `/brief` run's Step 4 will find it via
+  `consumed: false`; a later `/brief-me` run's Step 4 will find it via
   `unconsumed_projects` and offer to dispatch it, even if this run never
   reached Step 4.

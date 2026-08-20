@@ -5,7 +5,7 @@
     {
       "id": "F1",
       "title": "收件匣 schema 與協定文件",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "acceptance": [
         "docs/schema.md 以 JSON Schema 定義四種記錄型別，各附一個完整範例：question（id、project、title、body、choices[] 可選、recommendation 可選、severity 屬 {low,normal,high}、created_at）、report（id、project、summary、severity 可選、created_at）、status（ref＝某 question 或 report 的 id、status 屬 {answered,cancelled,read}、at）、answer（question_id、chosen 可選、free_text 可選、answered_at、consumed 布林）。所有 id 為 UUIDv4 字串，由寫入該記錄的工具產生，跨併發寫入者必須唯一。",
@@ -93,7 +93,7 @@
     {
       "id": "F7",
       "title": "headless 委派證據文件",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "acceptance": [
         "docs/headless-delegation-evidence.md 記錄 2026-08-20 既有觀察（session ba5dd2b3），不重跑任何東西：一個 headless claude -p session 成功派出 Explore subagent，證據為 (a) 逐字稿中有 subagent_type 為 Explore 的 Agent tool call、(b) modelUsage 出現 haiku 用量、(c) permission_denials 為空、(d) 最終輸出原封轉述 subagent 回報。",

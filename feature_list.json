@@ -35,7 +35,7 @@
     {
       "id": "F3",
       "title": "brief-submit skill：agent 側投遞",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "acceptance": [
         "agent 以 question payload 呼叫 brief-submit 時，往 inbox.jsonl append 恰一行符合 schema 的 question；id 由 skill 產生（UUIDv4）並回報給呼叫者。缺 project 或 title、severity 值不合法、payload 自帶 id、或序列化後超過 8 KB 的 payload 一律拒絕並附理由，且不寫入任何東西；未帶 severity 時預設 normal。",
@@ -65,7 +65,7 @@
     {
       "id": "F5",
       "title": "dispatch 腳本：派出 headless 接續 session",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "acceptance": [
         "python scripts/dispatch.py <project> [<project> ...] 對每個指名專案，在 config.json projects[] 記載的 repo 路徑下背景啟動一個 claude -p session；不認得的專案名稱回報並跳過，不中斷整批。",

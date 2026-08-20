@@ -36,7 +36,7 @@ clone it straight into your personal skills directory and Claude Code loads
 it automatically on the next session, no marketplace registration needed.
 
 ```sh
-git clone <this-repo-url> ~/.claude/skills/agent-brief-me
+git clone https://github.com/RyanLeeYi/agent-brief-me.git ~/.claude/skills/agent-brief-me
 ```
 
 Start (or restart) a Claude Code session anywhere, then run:

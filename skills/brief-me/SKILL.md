@@ -27,14 +27,22 @@ never stored separately, which is also why leaving `/brief-me` early is safe
 Run this as a throwaway script (or `python3 -c "..."`), calling the pieces
 described in each step below. `atomic_append_line` mirrors
 `tests/test_concurrent_append.py`'s helper and the copy in
-`skills/brief-init/SKILL.md` / `skills/brief-me-submit/SKILL.md` verbatim.
+`skills/brief-init/SKILL.md` / `skills/brief-submit/SKILL.md` verbatim.
 
 ```python
 import json
 import os
 import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
+
+# The inbox is UTF-8; on Windows, Python < 3.15 defaults stdout to the
+# locale code page (e.g. cp950), which mangles non-ASCII record content
+# the moment you print it. Force UTF-8 so what you show the user is what
+# is actually in the file.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 MAX_LINE_BYTES = 8 * 1024
 SEVERITY_RANK = {"high": 0, "normal": 1, "low": 2}

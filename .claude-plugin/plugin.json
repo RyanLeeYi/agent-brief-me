@@ -1,0 +1,5 @@
+{
+  "name": "agent-brief-me",
+  "description": "Async decision inbox for Claude Code agents: working sessions submit questions and reports to a shared JSONL inbox; you batch-review them at two checkpoints (before sleep, after waking) via /brief and redispatch headless sessions to continue.",
+  "version": "0.1.0"
+}

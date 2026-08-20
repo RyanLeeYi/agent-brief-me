@@ -49,7 +49,7 @@
     {
       "id": "F4",
       "title": "/brief skill：晨報審核流程",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "acceptance": [
         "有未讀 report 時 /brief 先顯示它們，依 project 分組、各帶 summary 與距今時間；顯示時對每筆 report 往 inbox.jsonl append 一筆 read 型 status 行，下次 /brief 不再出現。",

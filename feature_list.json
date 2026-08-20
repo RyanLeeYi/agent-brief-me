@@ -85,7 +85,8 @@
         "README 記載 plugin 安裝指令；在沒有既有安裝的環境照著逐字執行後，新 session 中 /brief 與 /brief-init 可叫用，且此條以實際執行安裝來驗證。",
         "README 在第一個二級標題之前寫明：這是什麼（agent 的非同步決策收件匣）、每日迴圈（睡前審核、派工、睡覺、晨間審核）、日常唯一命令（/brief），以及兩個誠實限制：只支援 Claude Code（MCP server 版是未來工作）、過夜 session 需要機器保持喚醒。",
         "README 記載 collector 掛鉤（如何把任何來源的結構化待辦餵進收件匣）並附一個通用範例。",
-        "隱私 grep 乾淨且只驗不修：對所有追蹤中的檔案搜尋 C:/Users/user、C:\\Users\\user、/Users/user、OneDrive、Obsidian、ian23x、lift-log、offer-radar、mission-control、instagram-place-to-maps、instagram-reels-summarizer、TDA-MDS 全部無命中；任何命中即回報並阻斷本條，不靜默修掉。"
+        "隱私 grep 乾淨且只驗不修：對所有追蹤中的檔案搜尋 C:/Users/user、C:\\Users\\user、/Users/user、OneDrive、Obsidian、ian23x、lift-log、offer-radar、mission-control、instagram-place-to-maps、instagram-reels-summarizer、TDA-MDS 全部無命中（排除 feature_list.json 內作為搜尋詞的本清單自身）；任何其他命中即回報並阻斷本條，不靜默修掉。（2026-08-20 修正原因：原條文自指必然命中，經使用者重新簽核）",
+        "skill 以 plugin 命名空間形式叫用（/agent-brief-me:brief 等）即滿足本 feature 與 F6 條 1 的「可叫用」；裸名 /brief 非要求。（2026-08-20 使用者確認）"
       ],
       "touches": ["README.md", ".claude-plugin/plugin.json"],
       "requires": ["F2", "F3", "F4", "F5"]

@@ -111,6 +111,32 @@ Any structured source works the same way -- an issue tracker webhook, a
 calendar export, a cron job scraping logs -- as long as it ends up appending
 valid `question`/`report` records through the same atomic-append rule.
 
+## Notify hook
+
+`config.json`'s `notify` field is also an argv array (or `null` for no
+notifications). When set, submitting a **high**-severity question executes it
+exactly once, with the question's `project` and `title` appended as two
+trailing arguments; `low` and `normal` severities never trigger it. Point it
+at whatever reaches you -- a Telegram bot script, a desktop notifier, a
+webhook curl:
+
+```json
+{"projects": [], "collector": null, "notify": ["python3", "/path/to/send-telegram.py"]}
+```
+
+Your script then receives e.g. `send-telegram.py my-project "prod deploy blocked: pick a rollback strategy"`.
+
+## Teaching your agents to use the inbox
+
+Dispatched sessions only use the inbox if their instructions say so.
+`brief-init` prints a one-paragraph protocol sentence (use `brief-submit`
+when blocked on a user decision, and once more before finishing to report
+what was done) and offers to append it to a rules file you name -- your
+global instructions file is the usual target. Sessions spawned by
+`scripts/dispatch.py` also get this instruction embedded in their prompt, so
+the rules-file step mainly covers sessions you start through other means
+(cron jobs, your own scripts).
+
 ## Further reading
 
 - `docs/schema.md` -- authoritative inbox schema and protocol.

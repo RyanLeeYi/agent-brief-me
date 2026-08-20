@@ -42,7 +42,7 @@ git clone https://github.com/RyanLeeYi/agent-brief-me.git ~/.claude/skills/agent
 Start (or restart) a Claude Code session anywhere, then run:
 
 ```
-/agent-brief-me:brief-init
+/agent-brief-me:init
 ```
 
 to create `~/.agent-brief/` and register the projects you want tracked.
@@ -53,7 +53,7 @@ under "Skills-directory plugins".
 
 ## Skills
 
-- `brief-init` -- one-time, idempotent setup: creates `~/.agent-brief/`,
+- `init` -- one-time, idempotent setup: creates `~/.agent-brief/`,
   registers projects, and runs a smoke test.
 - `brief` -- the daily review pass: unread reports, pending questions,
   optional dispatch.
@@ -129,7 +129,7 @@ Your script then receives e.g. `send-telegram.py my-project "prod deploy blocked
 ## Teaching your agents to use the inbox
 
 Dispatched sessions only use the inbox if their instructions say so.
-`brief-init` prints a one-paragraph protocol sentence (use `brief-submit`
+`init` prints a one-paragraph protocol sentence (use `brief-submit`
 when blocked on a user decision, and once more before finishing to report
 what was done) and offers to append it to a rules file you name -- your
 global instructions file is the usual target. Sessions spawned by

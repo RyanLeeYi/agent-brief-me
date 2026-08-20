@@ -1,9 +1,9 @@
 ---
-name: brief-init
-description: First-time setup for agent-brief-me. Creates ~/.agent-brief/, registers projects to track, offers to document the agent-side protocol, and runs a smoke test. Use when the user runs /brief-init or asks to set up, initialize, or configure the agent-brief inbox.
+name: init
+description: First-time setup for agent-brief-me. Creates ~/.agent-brief/, registers projects to track, offers to document the agent-side protocol, and runs a smoke test. Use when the user runs /agent-brief-me:init or asks to set up, initialize, or configure the agent-brief inbox.
 ---
 
-# brief-init
+# init
 
 One-time, idempotent setup for the agent-brief-me inbox. Run the steps below
 in order. Report progress after each step; never batch the report to the end.
@@ -72,9 +72,9 @@ Compute `base = os.path.expanduser("~/.agent-brief")`.
    all three were freshly created, state that this is a first-time setup.
 
 `collector` and `notify`, once configured (by something other than
-brief-init), are argv arrays, e.g. `["python3", "collector.py"]`. When
+init), are argv arrays, e.g. `["python3", "collector.py"]`. When
 `notify` runs, `project` and `title` are appended, in that order, to the end
-of the array before it is executed. brief-init only guarantees both fields
+of the array before it is executed. init only guarantees both fields
 start as `null`; it never sets them itself.
 
 ## Step 2: Register projects to track
@@ -117,8 +117,8 @@ Run each check in order and report pass/fail as you go, one check at a time:
      "type": "question",
      "id": str(uuid.uuid4()),
      "project": "agent-brief-me",
-     "title": "brief-init smoke test",
-     "body": "Automated smoke-test question created by /brief-init; safe to ignore.",
+     "title": "init smoke test",
+     "body": "Automated smoke-test question created by /agent-brief-me:init; safe to ignore.",
      "severity": "low",
      "created_at": "<current UTC time, e.g. datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')>",
    }

@@ -27,7 +27,7 @@ never stored separately, which is also why leaving `/brief` early is safe
 Run this as a throwaway script (or `python3 -c "..."`), calling the pieces
 described in each step below. `atomic_append_line` mirrors
 `tests/test_concurrent_append.py`'s helper and the copy in
-`skills/brief-init/SKILL.md` / `skills/brief-submit/SKILL.md` verbatim.
+`skills/init/SKILL.md` / `skills/brief-submit/SKILL.md` verbatim.
 
 ```python
 import json

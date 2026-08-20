@@ -17,7 +17,7 @@ after the append (and, for a high-severity question, after running
 - Blocked on a decision only the user can make -> `submit_question`.
 - Finishing work, to report what was done -> `submit_report`.
 
-This mirrors the sentence `brief-init` prints in its Step 3.
+This mirrors the sentence `init` prints in its Step 3.
 
 ## Question payload
 
@@ -66,7 +66,7 @@ as a warning alongside the `ok: true` result.
 ## Reference implementation
 
 Reuses the atomic append helper from `docs/schema.md` /
-`skills/brief-init/SKILL.md` verbatim. Run this as a throwaway script (or
+`skills/init/SKILL.md` verbatim. Run this as a throwaway script (or
 `python3 -c "..."`), calling `submit_question(payload)` or
 `submit_report(payload)` with the payload dict built from the caller's
 situation; print the JSON result so the calling agent can read it back.

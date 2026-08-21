@@ -167,7 +167,7 @@ DISPATCH_DEFAULTS = {
     "model": None,
     "delegate": True,
 }
-PERMISSION_MODES = ("auto", "acceptEdits", "bypassPermissions")
+PERMISSION_MODES = ("auto", "bypassPermissions")
 
 
 def dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -181,7 +181,7 @@ def dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def claude_args(settings: dict[str, Any]) -> list[str]:
+def claude_args(settings: dict[str, Any], brief_home: str) -> list[str]:
     """Flags shared by headless and --watch. Must come AFTER the positional
     prompt: `--allowedTools <tools...>` is variadic and swallows anything
     after it (verified 2026-08-21)."""
@@ -190,6 +190,9 @@ def claude_args(settings: dict[str, Any]) -> list[str]:
     else:
         args = ["--permission-mode", settings["permission_mode"],
                 "--allowedTools", settings["allowed_tools"]]
+    # brief-submit writes outside the project dir; auto mode silently denies
+    # that in -p unless the dir is granted.
+    args += ["--add-dir", brief_home]
     if settings["model"]:
         args += ["--model", str(settings["model"])]
     if not settings["delegate"]:
@@ -270,7 +273,7 @@ def main(argv: list[str]) -> int:
     projects_by_name = {p["name"]: p["path"] for p in config.get("projects", [])}
     settings = dispatch_settings(config)
     watch = watch_flag or bool(settings["watch"])
-    args = claude_args(settings)
+    args = claude_args(settings, brief_home)
 
     question_project = fold_question_projects(os.path.join(brief_home, "inbox.jsonl"))
     answers_path = os.path.join(brief_home, "answers.jsonl")

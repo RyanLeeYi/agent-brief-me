@@ -79,8 +79,10 @@ under "Skills-directory plugins".
 - `watch` -- `true` opens an interactive `claude` window per project instead
   of a headless `claude -p` (same as passing `--watch` to `dispatch.py` or
   `/brief-me --watch`).
-- `permission_mode` -- `auto` (default) or `acceptEdits`, both combined with
-  `allowed_tools`; or `bypassPermissions`.
+- `permission_mode` -- `auto` (default, combined with `allowed_tools`; blocked
+  actions are silently denied in headless mode) or `bypassPermissions`.
+  `~/.agent-brief` is always passed via `--add-dir` so `brief-submit` can
+  write the inbox from inside a project.
 - `model` -- `--model` for the worker session; `null` keeps Claude Code's
   default.
 - `delegate` -- `false` tells workers to work solo and blocks the `Agent`

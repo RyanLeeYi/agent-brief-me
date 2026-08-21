@@ -105,7 +105,7 @@ each as the default option.
 2. **Permission level?** -> `permission_mode`:
    - `auto` (default): Claude Code auto mode plus the tool allowlist in
      `allowed_tools` (default `Bash,Read,Edit,Write,Glob,Grep,Skill`).
-   - `acceptEdits`: file edits auto-approved, same allowlist.
+     Actions the classifier blocks are silently denied in headless mode.
    - `bypassPermissions`: runs with `--dangerously-skip-permissions`. Before
      accepting this, print the warning: "Workers will run every command,
      including destructive ones, with no confirmation, unattended and

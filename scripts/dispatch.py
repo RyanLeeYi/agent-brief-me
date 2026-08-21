@@ -202,8 +202,16 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str) -> subprocess.Popen:
     anything outside it still prompts in the window. No log file - the window
     is the log.
     """
+    # The multi-line JSONL prompt is written to a file and referenced by a
+    # one-line positional prompt: a long quoted argv with newlines/quotes was
+    # silently dropped by the interactive launcher (2026-08-21).
+    prompt_path = os.path.join(cwd, ".harness", "dispatch-prompt.md")
+    os.makedirs(os.path.dirname(prompt_path), exist_ok=True)
+    with open(prompt_path, "w", encoding="utf-8") as fh:
+        fh.write(prompt)
+    opener = f"Read {prompt_path} and follow it as your task brief."
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)  # Windows only; 0 elsewhere
-    return subprocess.Popen([claude_cmd, *HEADLESS_ARGS, prompt], cwd=cwd, creationflags=flags)
+    return subprocess.Popen([claude_cmd, *HEADLESS_ARGS, opener], cwd=cwd, creationflags=flags)
 
 
 def main(argv: list[str]) -> int:

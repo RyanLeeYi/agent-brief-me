@@ -100,7 +100,7 @@ python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve        # http:/
 python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve --port 9000
 ```
 
-It binds to 127.0.0.1 only, reads and appends the same two JSONL files as `/brief-me` (mix the two freely), and its Refresh button runs the configured collector. Each question offers its choices, a free-text "Other answer", and "Skip for now"; nothing is written until you press Save. What each decision writes:
+It binds to 127.0.0.1 by default (`--host 0.0.0.0` or a VPN address opts in to LAN/VPN access - the API has no authentication, so only on a network you trust), reads and appends the same two JSONL files as `/brief-me` (mix the two freely), and its Refresh button runs the configured collector. Each question offers its choices, a free-text "Other answer", and "Skip for now"; nothing is written until you press Save. What each decision writes:
 
 | Decision | Written | Effect |
 |---|---|---|

@@ -590,17 +590,24 @@ def make_server(host="127.0.0.1", port=DEFAULT_PORT):
 
 
 def _run_serve(args):
-    port = DEFAULT_PORT
+    port, host = DEFAULT_PORT, "127.0.0.1"
     i = 0
     while i < len(args):
         if args[i] == "--port" and i + 1 < len(args):
             port = int(args[i + 1])
             i += 2
+        elif args[i] == "--host" and i + 1 < len(args):
+            # Opt-in only. The API has no authentication: bind to a LAN/VPN
+            # address (or 0.0.0.0) only on a network you trust end to end.
+            host = args[i + 1]
+            i += 2
         else:
             i += 1
-    server = make_server(port=port)
-    print(f"agent-brief-me serving on http://127.0.0.1:{server.server_address[1]}/ "
+    server = make_server(host=host, port=port)
+    print(f"agent-brief-me serving on http://{host}:{server.server_address[1]}/ "
           f"(BRIEF_HOME={get_brief_home()})")
+    if host != "127.0.0.1":
+        print("warning: --host exposes an unauthenticated API beyond localhost")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -613,7 +620,7 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "serve":
         _run_serve(sys.argv[2:])
     elif len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(json.dumps({"ok": False, "error": "usage: brief_me.py serve [--port N] | load | read <report_id>... | answer <qid> [--chosen T]... [--free-text T] | dismiss <qid>... | unconsumed"}))
+        print(json.dumps({"ok": False, "error": "usage: brief_me.py serve [--port N] [--host H] | load | read <report_id>... | answer <qid> [--chosen T]... [--free-text T] | dismiss <qid>... | unconsumed"}))
         sys.exit(1)
     else:
         print(json.dumps(COMMANDS[sys.argv[1]](sys.argv[2:]), ensure_ascii=False, indent=1))

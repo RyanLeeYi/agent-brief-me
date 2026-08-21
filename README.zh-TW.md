@@ -100,7 +100,7 @@ python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve        # http:/
 python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve --port 9000
 ```
 
-只綁 127.0.0.1，讀寫的是與 `/brief-me` 相同的兩個 JSONL 檔（兩者可混用），Refresh 鈕會跑設定的 collector。每題提供選項、自由填寫的「Other answer」與「Skip for now」；按 Save 之前什麼都不會寫入。各種處置寫什麼：
+預設只綁 127.0.0.1（`--host 0.0.0.0` 或 VPN 位址可開放給區網／VPN——API 沒有驗證，只能在你完全信任的網段用），讀寫的是與 `/brief-me` 相同的兩個 JSONL 檔（兩者可混用），Refresh 鈕會跑設定的 collector。每題提供選項、自由填寫的「Other answer」與「Skip for now」；按 Save 之前什麼都不會寫入。各種處置寫什麼：
 
 | 處置 | 寫入 | 效果 |
 |---|---|---|

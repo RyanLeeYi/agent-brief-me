@@ -330,11 +330,14 @@ non-empty, invoke it in one call from the plugin/repo root (where
 `scripts/dispatch.py` lives):
 
 ```
-python scripts/dispatch.py <confirmed-project-1> <confirmed-project-2> ...
+python scripts/dispatch.py [--watch] <confirmed-project-1> <confirmed-project-2> ...
 ```
 
 using the confirmed project names, in the order they were confirmed, as
-positional arguments. If no project was confirmed, do not invoke
+positional arguments. Pass `--watch` if and only if the skill was invoked
+with `--watch` in its arguments (`$ARGUMENTS`): it opens each project as an
+interactive `claude` window the user can watch, instead of a headless
+`claude -p` session. If no project was confirmed, do not invoke
 `scripts/dispatch.py` at all.
 
 `scripts/dispatch.py`'s own contract (looking up each project's path,

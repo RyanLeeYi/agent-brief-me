@@ -135,6 +135,8 @@ def unconsumed_answers_for(
 
 
 def build_prompt(project: str, unconsumed: list[dict[str, Any]]) -> str:
+    # ponytail: same prompt for headless and --watch; the BRIEF_SUBMIT
+    # sentence is harmless in an interactive window (user just sees it).
     if unconsumed:
         answers_block = "\n".join(entry["line"] for entry in unconsumed)
     else:
@@ -148,6 +150,18 @@ def build_prompt(project: str, unconsumed: list[dict[str, Any]]) -> str:
         f"{DELEGATION_SENTENCE}\n\n"
         f"{BRIEF_SUBMIT_SENTENCE}\n"
     )
+
+
+# Non-interactive `-p` auto-denies every permission prompt, so without an
+# allowlist the worker is read-only (2026-08-20: two dispatched sessions spun
+# for 0 changes). Edits + shell + the brief-submit skill are what a worker needs;
+# everything else (MCP, web, Agent) stays denied.
+# ponytail: flat allowlist, no per-project config; add a config.json key when
+# one project needs a different set.
+HEADLESS_ARGS = [
+    "--permission-mode", "acceptEdits",
+    "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep,Skill",
+]
 
 
 def make_log_path(brief_home: str, project: str) -> str:
@@ -165,7 +179,7 @@ def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str) -> subprocess.P
     log_fh = open(log_path, "wb")
     try:
         proc = subprocess.Popen(
-            [claude_cmd, "-p"],
+            [claude_cmd, "-p", *HEADLESS_ARGS],
             cwd=cwd,
             stdin=subprocess.PIPE,
             stdout=log_fh,
@@ -182,9 +196,21 @@ def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str) -> subprocess.P
     return proc
 
 
+def spawn_watch(claude_cmd: str, cwd: str, prompt: str) -> subprocess.Popen:
+    """Open an interactive `claude <prompt>` in a new console window so the
+    user can watch it work. Same allowlist as headless so behaviour matches;
+    anything outside it still prompts in the window. No log file - the window
+    is the log.
+    """
+    flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)  # Windows only; 0 elsewhere
+    return subprocess.Popen([claude_cmd, *HEADLESS_ARGS, prompt], cwd=cwd, creationflags=flags)
+
+
 def main(argv: list[str]) -> int:
+    watch = "--watch" in argv
+    argv = [a for a in argv if a != "--watch"]
     if not argv:
-        print("usage: dispatch.py <project> [<project> ...]", file=sys.stderr)
+        print("usage: dispatch.py [--watch] <project> [<project> ...]", file=sys.stderr)
         return 1
 
     brief_home = get_brief_home()
@@ -210,13 +236,16 @@ def main(argv: list[str]) -> int:
         log_path = make_log_path(brief_home, name)
 
         try:
-            spawn(claude_cmd, path, prompt, log_path)
+            if watch:
+                spawn_watch(claude_cmd, path, prompt)
+            else:
+                spawn(claude_cmd, path, prompt, log_path)
         except OSError as exc:
             print(f"{name}: spawn failed: {exc}")
             exit_code = 1
             continue
 
-        print(f"{name}: dispatched, log={log_path}")
+        print(f"{name}: opened in new window" if watch else f"{name}: dispatched, log={log_path}")
 
         for entry in unconsumed:
             updated = dict(entry["record"])

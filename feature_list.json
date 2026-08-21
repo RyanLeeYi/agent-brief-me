@@ -4,27 +4,6 @@
   "archive": "docs/archive/feature_list.json",
   "features": [
     {
-      "id": "F8",
-      "title": "Web UI 後端：brief_me.py serve 與 reopened 狀態",
-      "status": "failing",
-      "signed_off": true,
-      "acceptance": [
-        "`python scripts/brief_me.py serve [--port N]`（預設 8765）用 stdlib http.server 在 127.0.0.1 開 HTTP 服務；GET / 回傳 scripts/brief_me.html 的內容（Content-Type text/html; charset=utf-8），檔案不存在時回 500 並附 {ok:false,error}。",
-        "API 契約（F8 實作、F9 消費，兩邊以此為準，不得各自擴充）：GET /api/state -> 不執行 collector（`collector_warning` 固定 null），其餘與 `brief_me.py load` 相同，另加 `projects`（config.json 專案名稱陣列）、`unconsumed_counts`（{專案名: 未消費答案數}）、`dismissed`（與 pending_questions 同形狀的 {專案: [question]}，只含折疊後現況為 cancelled 的問題，每筆多 `dismissed_at`＝最後一筆 cancelled 的 at）；POST /api/collect {} -> 執行 config.json 的 collector，回 {ok, collector_warning}；POST /api/read {ids:[...]} -> 對每個 id append read 狀態；POST /api/answer {answers:[{id, chosen?: string|string[], free_text?: string}], dismiss:[id...], dispatch?: {projects:[...], watch: bool}} -> 依序對每個 answer append 答案行與 answered 狀態、對 dismiss 的每個 id append cancelled 狀態，然後若有 dispatch 則以 `subprocess.run([sys.executable, scripts/dispatch.py, (--watch), *projects], capture_output=True, text=True)` 呼叫，逐行解析 stdout 中 `<project>: dispatched, log=<path>` 取得 log_paths（watch 時為空陣列）、`<project>: dispatched` 或 `<project>: opened in new window` 列入 dispatched；回傳 {ok:true, saved:n, dismissed:n, dispatched:[...], log_paths:[...], dispatch_error?: string}——dispatch.py 非零退出時仍回 200、`ok:true`、`dispatched` 只列成功者、`dispatch_error` 為 stdout+stderr 尾 2000 字，答案與 dismiss 的寫入不因 dispatch 失敗回滾；POST /api/reopen {ids:[...]} -> 對每個 id append {type:'status', ref:id, status:'reopened', at}；輸入驗證（全部在寫入前檢查，任一失敗回 400 {ok:false,error} 且兩個檔案位元組長度不變）：body 不是 JSON 物件；answers 某條 `chosen` 與 `free_text` 皆缺、或 `free_text` 去空白為空且無 `chosen`；同一 id 同時在 answers 與 dismiss；answers/dismiss/reopen/read 的任一 id 不存在於 inbox 的 question（read 為 report）；`multi` 與 `chosen` 型別不符不擋、原樣寫入。所有端點只綁 127.0.0.1、只接受 JSON、未知路徑 404、內部錯誤 500 加 {ok:false,error}。",
-        "狀態折疊規則新增 `reopened`：對同一 ref，依檔案順序最後一筆 status 決定現況；`reopened` 之後該問題回到 pending（會再出現在 pending_questions、可再被回答或 dismiss；再次 dismiss 後再次出現在 dismissed）。docs/schema.md 的 status enum 加入 `reopened`、寫明此折疊規則，並把 Lifecycle 一節「answered/cancelled are terminal」改為「answered 為終態；cancelled 可經 reopened 回到 pending」，`rg -n terminal docs/schema.md` 不得殘留舊句。",
-        "`load` 與 GET /api/state 的每個 question 帶 `multi`（有才帶）與 `options`（recommendation 優先，再 choices，不含 Dismiss/Skip——Dismiss/Skip 由前端自行呈現；CLI 的 build_option_list 維持原樣不受影響）。",
-        "POST /api/answer 的 chosen 為陣列時原樣寫入 answers.jsonl；answers 與 dismiss 同時存在時先處理 answers 再 dismiss。",
-        "tests/test_brief_me_api.py（stdlib unittest，BRIEF_HOME 指向暫存目錄、以隨機埠在背景執行緒啟動 serve）覆蓋：state 形狀含 projects/unconsumed_counts/dismissed；/api/state 連打三次不觸發 collector（collector 設為會建立 sentinel 檔的指令）而 /api/collect 會；answer 單選／多選／僅 free_text；dismiss 後出現在 dismissed 且 dismissed_at 正確；reopen 後回到 pending，再 dismiss 後再回 dismissed；400 案例各一（缺 chosen 與 free_text、同 id 衝突、未知 id）且檔案長度不變；dispatch 以 BRIEF_CLAUDE_CMD 指向假指令：headless 回 log_paths 非空、watch 回空陣列、含不存在專案時回 dispatch_error 且 dispatched 不含它且答案已寫入。`python tests/test_brief_me_api.py` 全綠。",
-        "不改動 scripts/dispatch.py 與 skills/ 下任何檔案；不新增第三方依賴。"
-      ],
-      "touches": [
-        "scripts/brief_me.py",
-        "docs/schema.md",
-        "tests/test_brief_me_api.py"
-      ],
-      "requires": []
-    },
-    {
       "id": "F9",
       "title": "Web UI 前端：scripts/brief_me.html 單檔收件匣介面",
       "status": "failing",

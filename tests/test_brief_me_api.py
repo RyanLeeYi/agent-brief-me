@@ -1,0 +1,370 @@
+"""Tests for the F8 Web UI backend (`brief_me.py serve`): the GET/POST
+/api/* JSON contract and the `reopened` status folding rule.
+
+Runs standalone: `python tests/test_brief_me_api.py`. stdlib unittest only.
+BRIEF_HOME is pointed at a fresh temp directory per test; the server binds
+127.0.0.1 on a random port (port 0) in a background thread. Dispatch tests
+point BRIEF_CLAUDE_CMD at a fake "claude" so no real `claude` is invoked.
+"""
+
+import json
+import os
+import shutil
+import sys
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+import uuid
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+import brief_me  # noqa: E402
+
+
+def _write_fake_claude(directory):
+    """A stand-in for the real `claude` binary, for dispatch.py's
+    BRIEF_CLAUDE_CMD hook. Headless mode (argv[1] == "-p") drains stdin
+    before exiting, so dispatch.py's blocking stdin write never sees a
+    broken pipe; --watch mode (any other first arg) exits immediately
+    without touching stdin. subprocess.Popen can't launch a .bat directly
+    without an absolute path, and can't launch a bare .py at all on
+    Windows, so the .bat wraps `sys.executable fake_claude.py`.
+    """
+    script_path = os.path.join(directory, "fake_claude.py")
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(
+            "import sys\n"
+            "if len(sys.argv) > 1 and sys.argv[1] == '-p':\n"
+            "    sys.stdin.read()\n"
+            "sys.exit(0)\n"
+        )
+    if os.name == "nt":
+        wrapper_path = os.path.join(directory, "fake_claude.bat")
+        with open(wrapper_path, "w", encoding="utf-8") as f:
+            f.write(f'@echo off\r\n"{sys.executable}" "{script_path}" %*\r\n')
+        return wrapper_path
+    wrapper_path = os.path.join(directory, "fake_claude.sh")
+    with open(wrapper_path, "w", encoding="utf-8") as f:
+        f.write(f'#!/bin/sh\nexec "{sys.executable}" "{script_path}" "$@"\n')
+    os.chmod(wrapper_path, 0o755)
+    return wrapper_path
+
+
+class BriefMeAPITestCase(unittest.TestCase):
+    """Each test gets a fresh BRIEF_HOME, inbox, and server instance."""
+
+    def setUp(self):
+        self._orig_env = dict(os.environ)
+        self.home = tempfile.mkdtemp(prefix="brief-home-")
+        self.fake_claude_dir = tempfile.mkdtemp(prefix="fake-claude-")
+        os.environ["BRIEF_HOME"] = self.home
+        os.environ["BRIEF_CLAUDE_CMD"] = _write_fake_claude(self.fake_claude_dir)
+
+        self.server = brief_me.make_server(port=0)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+        os.environ.clear()
+        os.environ.update(self._orig_env)
+        shutil.rmtree(self.home, ignore_errors=True)
+        shutil.rmtree(self.fake_claude_dir, ignore_errors=True)
+
+    # -- fixtures ----------------------------------------------------
+    def _inbox_path(self):
+        return os.path.join(self.home, "inbox.jsonl")
+
+    def _answers_path(self):
+        return os.path.join(self.home, "answers.jsonl")
+
+    def _add_question(self, project="demo", title="Pick one", body="body text",
+                       severity="normal", choices=None, multi=False,
+                       recommendation=None, session_id=None):
+        record = {
+            "type": "question",
+            "id": str(uuid.uuid4()),
+            "project": project,
+            "title": title,
+            "body": body,
+            "severity": severity,
+            "created_at": brief_me._now(),
+        }
+        if choices is not None:
+            record["choices"] = choices
+        if multi:
+            record["multi"] = True
+        if recommendation is not None:
+            record["recommendation"] = recommendation
+        if session_id is not None:
+            record["session_id"] = session_id
+        brief_me.atomic_append_line(self._inbox_path(), record)
+        return record["id"]
+
+    def _add_report(self, project="demo", summary="a report", severity="low"):
+        record = {
+            "type": "report",
+            "id": str(uuid.uuid4()),
+            "project": project,
+            "summary": summary,
+            "severity": severity,
+            "created_at": brief_me._now(),
+        }
+        brief_me.atomic_append_line(self._inbox_path(), record)
+        return record["id"]
+
+    def _write_config(self, projects=None, collector=None):
+        config = {"projects": projects or []}
+        if collector is not None:
+            config["collector"] = collector
+        with open(os.path.join(self.home, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(config, f)
+
+    def _file_sizes(self):
+        return (
+            os.path.getsize(self._inbox_path()) if os.path.exists(self._inbox_path()) else 0,
+            os.path.getsize(self._answers_path()) if os.path.exists(self._answers_path()) else 0,
+        )
+
+    def _request(self, method, path, body=None):
+        url = f"http://127.0.0.1:{self.port}{path}"
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method,
+                                     headers={"Content-Type": "application/json"} if data else {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            with exc:
+                return exc.code, json.loads(exc.read().decode("utf-8"))
+
+    def _get(self, path):
+        return self._request("GET", path)
+
+    def _post(self, path, body):
+        return self._request("POST", path, body)
+
+    # -- GET / ---------------------------------------------------------
+    def test_index_missing_html_returns_500(self):
+        # scripts/brief_me.html is F9's file; not present in this worktree.
+        status, data = self._get("/")
+        self.assertEqual(status, 500)
+        self.assertFalse(data["ok"])
+        self.assertIn("error", data)
+
+    # -- GET /api/state --------------------------------------------------
+    def test_state_shape_and_multi_options(self):
+        qid = self._add_question(choices=["A", "B"], multi=True, recommendation="A",
+                                 session_id="sess-1")
+        self._add_report()
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+
+        status, data = self._get("/api/state")
+        self.assertEqual(status, 200)
+        self.assertNotIn("ok", data)  # same shape as CLI `load`, no ok wrapper
+        self.assertIsNone(data["collector_warning"])
+        self.assertEqual(data["projects"], ["demo"])
+        self.assertEqual(data["unconsumed_counts"], {})
+        self.assertEqual(data["dismissed"], {})
+
+        q = data["pending_questions"]["demo"][0]
+        self.assertEqual(q["id"], qid)
+        self.assertTrue(q["multi"])
+        self.assertEqual(q["options"], ["A", "B", "Dismiss", "Skip"])
+
+    def test_state_does_not_run_collector_but_collect_does(self):
+        sentinel = os.path.join(self.home, "sentinel.txt")
+        self._write_config(collector=[sys.executable, "-c",
+                                       "open('sentinel.txt', 'w').close()"])
+
+        for _ in range(3):
+            status, data = self._get("/api/state")
+            self.assertEqual(status, 200)
+            self.assertIsNone(data["collector_warning"])
+        self.assertFalse(os.path.exists(sentinel))
+
+        status, data = self._post("/api/collect", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertIsNone(data["collector_warning"])
+        self.assertTrue(os.path.exists(sentinel))
+
+    # -- POST /api/answer --------------------------------------------------
+    def test_answer_single_choice(self):
+        qid = self._add_question(choices=["A", "B"])
+        status, data = self._post("/api/answer", {"answers": [{"id": qid, "chosen": "A"}]})
+        self.assertEqual(status, 200)
+        self.assertEqual(data, {"ok": True, "saved": 1, "dismissed": 0,
+                                "dispatched": [], "log_paths": []})
+
+        answers = [json.loads(ln) for ln in brief_me.iter_lines(self._answers_path())]
+        self.assertEqual(len(answers), 1)
+        self.assertEqual(answers[0]["question_id"], qid)
+        self.assertEqual(answers[0]["chosen"], "A")
+        self.assertNotIn("free_text", answers[0])
+
+        _, state = self._get("/api/state")
+        self.assertNotIn("demo", state["pending_questions"])
+
+    def test_answer_multi_choice(self):
+        qid = self._add_question(choices=["A", "B", "C"], multi=True)
+        status, data = self._post("/api/answer", {
+            "answers": [{"id": qid, "chosen": ["A", "C"], "free_text": "note"}]})
+        self.assertEqual(status, 200)
+
+        answers = [json.loads(ln) for ln in brief_me.iter_lines(self._answers_path())]
+        self.assertEqual(answers[0]["chosen"], ["A", "C"])
+        self.assertEqual(answers[0]["free_text"], "note")
+
+    def test_answer_free_text_only(self):
+        qid = self._add_question()
+        status, data = self._post("/api/answer", {
+            "answers": [{"id": qid, "free_text": "just text"}]})
+        self.assertEqual(status, 200)
+
+        answers = [json.loads(ln) for ln in brief_me.iter_lines(self._answers_path())]
+        self.assertEqual(answers[0]["free_text"], "just text")
+        self.assertNotIn("chosen", answers[0])
+
+    # -- dismiss / reopen ----------------------------------------------
+    def test_dismiss_appears_in_dismissed_with_dismissed_at(self):
+        qid = self._add_question()
+        status, data = self._post("/api/answer", {"dismiss": [qid]})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["dismissed"], 1)
+        self.assertEqual(data["saved"], 0)
+
+        _, state = self._get("/api/state")
+        self.assertNotIn("demo", state.get("pending_questions", {}))
+        dismissed = state["dismissed"]["demo"]
+        self.assertEqual(len(dismissed), 1)
+        self.assertEqual(dismissed[0]["id"], qid)
+        self.assertIn("dismissed_at", dismissed[0])
+
+    def test_reopen_then_dismiss_again(self):
+        qid = self._add_question()
+        self._post("/api/answer", {"dismiss": [qid]})
+        first_dismissed_at = self._get("/api/state")[1]["dismissed"]["demo"][0]["dismissed_at"]
+
+        status, data = self._post("/api/reopen", {"ids": [qid]})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["reopened"], [qid])
+
+        _, state = self._get("/api/state")
+        self.assertEqual(state["pending_questions"]["demo"][0]["id"], qid)
+        self.assertEqual(state["dismissed"], {})
+
+        status, data = self._post("/api/answer", {"dismiss": [qid]})
+        self.assertEqual(status, 200)
+
+        _, state = self._get("/api/state")
+        dismissed = state["dismissed"]["demo"]
+        self.assertEqual(len(dismissed), 1)
+        self.assertEqual(dismissed[0]["id"], qid)
+        self.assertIn("dismissed_at", dismissed[0])
+        self.assertGreaterEqual(dismissed[0]["dismissed_at"], first_dismissed_at)
+
+    # -- POST /api/read --------------------------------------------------
+    def test_read_marks_report_and_clears_from_unread(self):
+        rid = self._add_report()
+        _, state = self._get("/api/state")
+        self.assertEqual(len(state["unread_reports"]["demo"]), 1)
+
+        status, data = self._post("/api/read", {"ids": [rid]})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["read"], [rid])
+
+        _, state = self._get("/api/state")
+        self.assertNotIn("demo", state.get("unread_reports", {}))
+
+    # -- 400 validation, file bytes unchanged ---------------------------
+    def test_400_missing_chosen_and_free_text(self):
+        qid = self._add_question()
+        before = self._file_sizes()
+        status, data = self._post("/api/answer", {"answers": [{"id": qid}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertIn("error", data)
+        self.assertEqual(self._file_sizes(), before)
+
+    def test_400_id_conflict_between_answers_and_dismiss(self):
+        qid = self._add_question(choices=["A"])
+        before = self._file_sizes()
+        status, data = self._post("/api/answer", {
+            "answers": [{"id": qid, "chosen": "A"}], "dismiss": [qid]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._file_sizes(), before)
+
+    def test_400_unknown_id(self):
+        before = self._file_sizes()
+        status, data = self._post("/api/answer", {
+            "answers": [{"id": "does-not-exist", "chosen": "A"}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._file_sizes(), before)
+
+    # -- dispatch ----------------------------------------------------------
+    def test_dispatch_headless_returns_nonempty_log_paths(self):
+        project_dir = tempfile.mkdtemp(prefix="brief-project-")
+        try:
+            self._write_config(projects=[{"name": "demo", "path": project_dir}])
+            qid = self._add_question(choices=["A"])
+            status, data = self._post("/api/answer", {
+                "answers": [{"id": qid, "chosen": "A"}],
+                "dispatch": {"projects": ["demo"], "watch": False}})
+            self.assertEqual(status, 200)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["dispatched"], ["demo"])
+            self.assertEqual(len(data["log_paths"]), 1)
+            self.assertNotIn("dispatch_error", data)
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_dispatch_watch_returns_empty_log_paths(self):
+        project_dir = tempfile.mkdtemp(prefix="brief-project-")
+        try:
+            self._write_config(projects=[{"name": "demo", "path": project_dir}])
+            qid = self._add_question(choices=["A"])
+            status, data = self._post("/api/answer", {
+                "answers": [{"id": qid, "chosen": "A"}],
+                "dispatch": {"projects": ["demo"], "watch": True}})
+            self.assertEqual(status, 200)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["dispatched"], ["demo"])
+            self.assertEqual(data["log_paths"], [])
+            self.assertNotIn("dispatch_error", data)
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    def test_dispatch_unknown_project_reports_error_but_saves_answer(self):
+        project_dir = tempfile.mkdtemp(prefix="brief-project-")
+        try:
+            self._write_config(projects=[{"name": "demo", "path": project_dir}])
+            qid = self._add_question(choices=["A"])
+            status, data = self._post("/api/answer", {
+                "answers": [{"id": qid, "chosen": "A"}],
+                "dispatch": {"projects": ["demo", "ghost"], "watch": False}})
+            self.assertEqual(status, 200)
+            self.assertTrue(data["ok"])
+            self.assertEqual(data["dispatched"], ["demo"])
+            self.assertIn("dispatch_error", data)
+            self.assertIn("ghost", data["dispatch_error"])
+
+            # dispatch.py appends a second "consumed: true" line for demo's
+            # answer once it dispatches successfully (docs/schema.md's
+            # answer-folding rule) - fold to the current value.
+            answers_by_question = brief_me.fold_answers(self._answers_path())
+            self.assertIn(qid, answers_by_question)
+            self.assertEqual(answers_by_question[qid]["chosen"], "A")
+            self.assertTrue(answers_by_question[qid]["consumed"])
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

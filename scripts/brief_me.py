@@ -1,12 +1,17 @@
 """brief-me reference implementation, extracted from skills/brief-me/SKILL.md
 so the skill prompt stays short. See docs/schema.md for the file formats.
+
+Also implements `serve`: a stdlib http.server backend for scripts/brief_me.html
+(F9), 127.0.0.1-only. See docs/schema.md for the `reopened` status this adds.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # The inbox is UTF-8; on Windows, Python < 3.15 defaults stdout to the
 # locale code page (e.g. cp950), which mangles non-ASCII record content
@@ -17,6 +22,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 MAX_LINE_BYTES = 8 * 1024
 SEVERITY_RANK = {"high": 0, "normal": 1, "low": 2}
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_PORT = 8765
 
 
 def atomic_append_line(path, record):
@@ -71,13 +78,29 @@ def iter_lines(path):
                 yield line
 
 
+def load_config(brief_home):
+    """~/.agent-brief/config.json, or {} if it doesn't exist yet."""
+    path = os.path.join(brief_home, "config.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def fold_inbox(inbox_path):
     """Fold inbox.jsonl into current state, per docs/schema.md's folding
-    rules. Returns (questions, reports, pending_questions, unread_reports):
+    rules. Returns (questions, reports, pending_questions, unread_reports,
+    q_last_status):
     - questions: dict id -> question record (every question ever seen)
     - reports: dict id -> report record (every report ever seen)
-    - pending_questions: question records with no answered/cancelled status
+    - pending_questions: question records whose last status line is none,
+      or "reopened" (a "reopened" question folds back to pending)
     - unread_reports: report records with no "read" status yet
+    - q_last_status: dict ref -> last answered/cancelled/reopened status
+      record for that ref (the raw {"type": "status", ...} line), so
+      callers needing more than pending/answered (e.g. the API's
+      "dismissed" list, which needs the cancelled line's `at`) don't have
+      to re-fold the file.
     """
     questions = {}
     reports = {}
@@ -93,11 +116,14 @@ def fold_inbox(inbox_path):
         elif rtype == "status":
             if record["status"] == "read":
                 r_read.add(record["ref"])
-            else:  # "answered" or "cancelled"; last line for a ref wins
-                q_last_status[record["ref"]] = record["status"]
-    pending_questions = [q for qid, q in questions.items() if qid not in q_last_status]
+            else:  # "answered", "cancelled", or "reopened"; last line for a ref wins
+                q_last_status[record["ref"]] = record
+    pending_questions = [
+        q for qid, q in questions.items()
+        if qid not in q_last_status or q_last_status[qid]["status"] == "reopened"
+    ]
     unread_reports = [r for rid, r in reports.items() if rid not in r_read]
-    return questions, reports, pending_questions, unread_reports
+    return questions, reports, pending_questions, unread_reports, q_last_status
 
 
 def fold_answers(answers_path):
@@ -148,8 +174,10 @@ def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def build_read_status(report_id):
-    return {"type": "status", "ref": report_id, "status": "read", "at": _now()}
+def build_status(ref, status):
+    """Build a {"type": "status", ...} line for any of the four status
+    values (answered/cancelled/read/reopened); `at` is now()."""
+    return {"type": "status", "ref": ref, "status": status, "at": _now()}
 
 
 def build_option_list(question):
@@ -182,7 +210,7 @@ def build_answer_and_status(question_id, chosen=None, free_text=None):
         answer["chosen"] = chosen
     if free_text is not None:
         answer["free_text"] = free_text
-    status = {"type": "status", "ref": question_id, "status": "answered", "at": _now()}
+    status = build_status(question_id, "answered")
     return answer, status
 
 
@@ -190,12 +218,7 @@ def run_collector(brief_home):
     """Run config.json's collector (argv array), cwd=brief_home, before the
     inbox is read. Returns an error string to report on non-zero exit (the
     caller keeps going regardless), or None on success / nothing configured."""
-    config_path = os.path.join(brief_home, "config.json")
-    if not os.path.exists(config_path):
-        return None
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
-    collector = config.get("collector")
+    collector = load_config(brief_home).get("collector")
     if collector is None:
         return None
     result = subprocess.run(list(collector), cwd=brief_home)
@@ -214,6 +237,38 @@ def unconsumed_projects(questions, answers_by_question):
     return sorted(projects)
 
 
+def question_view(q):
+    v = {k: q.get(k) for k in ("id", "project", "title", "body", "severity", "session_id", "multi") if q.get(k) is not None}
+    v["options"] = build_option_list(q)
+    v["age"] = time_ago(q["created_at"])
+    return v
+
+
+def report_view(r):
+    v = {k: r.get(k) for k in ("id", "project", "summary", "severity", "session_id") if r.get(k) is not None}
+    v["age"] = time_ago(r["created_at"])
+    return v
+
+
+def _state(brief_home, collector_warning):
+    """Shared question/report state used by both CLI `load` and GET
+    /api/state. Returns (payload, questions, q_last_status,
+    answers_by_question) so callers needing more than `payload` (the API's
+    dismissed list / unconsumed_counts) don't have to re-fold the files."""
+    inbox_path = os.path.join(brief_home, "inbox.jsonl")
+    questions, reports, pending, unread, q_last_status = fold_inbox(inbox_path)
+    answers_by_question = fold_answers(os.path.join(brief_home, "answers.jsonl"))
+    payload = {
+        "collector_warning": collector_warning,
+        "unread_reports": {p: [report_view(r) for r in sort_reports_by_age(rs)]
+                           for p, rs in group_by_project(unread).items()},
+        "pending_questions": {p: [question_view(q) for q in sort_questions_by_severity(qs)]
+                              for p, qs in group_by_project(pending).items()},
+        "unconsumed_projects": unconsumed_projects(questions, answers_by_question),
+    }
+    return payload, questions, q_last_status, answers_by_question
+
+
 # ---------------------------------------------------------------- CLI ----
 # Called by skills/brief-me/SKILL.md so the reference implementation above
 # does not have to sit in the skill prompt. Every command prints one JSON
@@ -222,31 +277,14 @@ def unconsumed_projects(questions, answers_by_question):
 def _cmd_load(args):
     brief_home = get_brief_home()
     warning = run_collector(brief_home)
-    questions, reports, pending, unread = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
-    answers_by_question = fold_answers(os.path.join(brief_home, "answers.jsonl"))
-    def q_view(q):
-        v = {k: q.get(k) for k in ("id", "project", "title", "body", "severity", "session_id", "multi") if q.get(k) is not None}
-        v["options"] = build_option_list(q)
-        v["age"] = time_ago(q["created_at"])
-        return v
-    def r_view(r):
-        v = {k: r.get(k) for k in ("id", "project", "summary", "severity", "session_id") if r.get(k) is not None}
-        v["age"] = time_ago(r["created_at"])
-        return v
-    return {
-        "collector_warning": warning,
-        "unread_reports": {p: [r_view(r) for r in sort_reports_by_age(rs)]
-                           for p, rs in group_by_project(unread).items()},
-        "pending_questions": {p: [q_view(q) for q in sort_questions_by_severity(qs)]
-                              for p, qs in group_by_project(pending).items()},
-        "unconsumed_projects": unconsumed_projects(questions, answers_by_question),
-    }
+    payload, _, _, _ = _state(brief_home, warning)
+    return payload
 
 
 def _cmd_read(args):
     brief_home = get_brief_home()
     for rid in args:
-        atomic_append_line(os.path.join(brief_home, "inbox.jsonl"), build_read_status(rid))
+        atomic_append_line(os.path.join(brief_home, "inbox.jsonl"), build_status(rid, "read"))
     return {"ok": True, "read": args}
 
 
@@ -277,22 +315,302 @@ def _cmd_dismiss(args):
     """Drop questions for good: append a cancelled status, write no answer."""
     brief_home = get_brief_home()
     for qid in args:
-        atomic_append_line(os.path.join(brief_home, "inbox.jsonl"),
-                           {"type": "status", "ref": qid, "status": "cancelled", "at": _now()})
+        atomic_append_line(os.path.join(brief_home, "inbox.jsonl"), build_status(qid, "cancelled"))
     return {"ok": True, "dismissed": args}
 
 
 def _cmd_unconsumed(args):
     brief_home = get_brief_home()
-    questions, _, _, _ = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
+    questions, _, _, _, _ = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
     answers_by_question = fold_answers(os.path.join(brief_home, "answers.jsonl"))
     return {"projects": unconsumed_projects(questions, answers_by_question)}
 
 
 COMMANDS = {"load": _cmd_load, "read": _cmd_read, "answer": _cmd_answer, "dismiss": _cmd_dismiss, "unconsumed": _cmd_unconsumed}
 
+
+# ------------------------------------------------------------- Web UI ----
+# GET / and the /api/* JSON endpoints backing scripts/brief_me.html (F9).
+# This is the F8/F9 API contract: F9 (and tests/_stub_api.py) must not
+# extend it independently.
+
+_DISPATCHED_WITH_LOG_RE = re.compile(r"^(.+): dispatched, log=(.+)$")
+_DISPATCHED_RE = re.compile(r"^(.+): dispatched$")
+_OPENED_WINDOW_RE = re.compile(r"^(.+): opened in new window$")
+
+
+def _api_state(brief_home):
+    """GET /api/state: like `load` but never runs the collector
+    (collector_warning is always null), plus `projects`,
+    `unconsumed_counts`, and `dismissed` for the Web UI."""
+    payload, questions, q_last_status, answers_by_question = _state(brief_home, None)
+
+    dismissed_by_project = defaultdict(list)
+    for qid, q in questions.items():
+        last = q_last_status.get(qid)
+        if last and last["status"] == "cancelled":
+            v = question_view(q)
+            v["dismissed_at"] = last["at"]
+            dismissed_by_project[q["project"]].append((q, v))
+    payload["dismissed"] = {
+        p: [v for _, v in sorted(items, key=lambda t: (SEVERITY_RANK[t[0]["severity"]], t[0]["created_at"]))]
+        for p, items in sorted(dismissed_by_project.items())
+    }
+
+    config = load_config(brief_home)
+    payload["projects"] = [p["name"] for p in config.get("projects", [])]
+
+    unconsumed_counts = {}
+    for qid, answer in answers_by_question.items():
+        if not answer.get("consumed", False) and qid in questions:
+            proj = questions[qid]["project"]
+            unconsumed_counts[proj] = unconsumed_counts.get(proj, 0) + 1
+    payload["unconsumed_counts"] = unconsumed_counts
+
+    return payload
+
+
+def _run_dispatch(brief_home, projects, watch):
+    """Invoke scripts/dispatch.py per the F8 API contract. Never raises on
+    a non-zero dispatch.py exit - that becomes dispatch_error, not an
+    exception, per the contract."""
+    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "dispatch.py")]
+    if watch:
+        cmd.append("--watch")
+    cmd.extend(projects)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    dispatched, log_paths = [], []
+    for line in result.stdout.splitlines():
+        m = _DISPATCHED_WITH_LOG_RE.match(line)
+        if m:
+            dispatched.append(m.group(1))
+            log_paths.append(m.group(2))
+            continue
+        m = _DISPATCHED_RE.match(line) or _OPENED_WINDOW_RE.match(line)
+        if m:
+            dispatched.append(m.group(1))
+
+    out = {"dispatched": dispatched, "log_paths": log_paths}
+    if result.returncode != 0:
+        out["dispatch_error"] = (result.stdout + result.stderr)[-2000:]
+    return out
+
+
+def _validate_answer_body(body, questions):
+    """Returns an error string, or None if `body` is a valid /api/answer
+    request per the F8 acceptance's 400 rules (checked in full before any
+    write happens)."""
+    if not isinstance(body, dict):
+        return "body must be a JSON object"
+    answers = body.get("answers", [])
+    dismiss = body.get("dismiss", [])
+    if not isinstance(answers, list) or not isinstance(dismiss, list):
+        return "answers and dismiss must be arrays"
+    for entry in answers:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            return "each answer needs an id"
+        has_chosen = entry.get("chosen") is not None
+        free_text = entry.get("free_text")
+        has_free_text = free_text is not None and str(free_text).strip() != ""
+        if not has_chosen and not has_free_text:
+            return f"answer {entry['id']} needs chosen and/or free_text"
+    answer_ids = [e["id"] for e in answers]
+    if set(answer_ids) & set(dismiss):
+        return f"id in both answers and dismiss: {sorted(set(answer_ids) & set(dismiss))[0]}"
+    unknown = [i for i in answer_ids + list(dismiss) if i not in questions]
+    if unknown:
+        return f"unknown question id: {unknown[0]}"
+    return None
+
+
+class BriefHTTPHandler(BaseHTTPRequestHandler):
+    """127.0.0.1-only backend for scripts/brief_me.html (F9). GET / serves
+    the html file; GET/POST /api/* implement the F8 API contract."""
+
+    def log_message(self, format, *args):
+        pass  # keep test/CLI output quiet; errors still surface as JSON
+
+    def _json(self, status, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json_body(self):
+        """Returns (data, error): data is a dict on success, error is a
+        user-facing string ("body must be a JSON object") otherwise. A
+        missing/empty body is treated as {}."""
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        if not raw.strip():
+            return {}, None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None, "body must be a JSON object"
+        if not isinstance(data, dict):
+            return None, "body must be a JSON object"
+        return data, None
+
+    def _serve_index(self):
+        html_path = os.path.join(SCRIPT_DIR, "brief_me.html")
+        try:
+            with open(html_path, "rb") as f:
+                body = f.read()
+        except OSError as exc:
+            self._json(500, {"ok": False, "error": str(exc)})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        try:
+            path = self.path.split("?", 1)[0]
+            if path == "/":
+                self._serve_index()
+            elif path == "/api/state":
+                self._json(200, _api_state(get_brief_home()))
+            else:
+                self._json(404, {"ok": False, "error": "not found"})
+        except Exception as exc:
+            self._json(500, {"ok": False, "error": str(exc)})
+
+    def do_POST(self):
+        try:
+            path = self.path.split("?", 1)[0]
+            handler = {
+                "/api/collect": self._post_collect,
+                "/api/read": self._post_read,
+                "/api/answer": self._post_answer,
+                "/api/reopen": self._post_reopen,
+            }.get(path)
+            if handler is None:
+                self._json(404, {"ok": False, "error": "not found"})
+                return
+            handler()
+        except Exception as exc:
+            self._json(500, {"ok": False, "error": str(exc)})
+
+    def _post_collect(self):
+        body, err = self._read_json_body()
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+        brief_home = get_brief_home()
+        warning = run_collector(brief_home)
+        self._json(200, {"ok": True, "collector_warning": warning})
+
+    def _post_read(self):
+        body, err = self._read_json_body()
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+        ids = body.get("ids", [])
+        if not isinstance(ids, list):
+            self._json(400, {"ok": False, "error": "ids must be an array"})
+            return
+        brief_home = get_brief_home()
+        _, reports, _, _, _ = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
+        unknown = [i for i in ids if i not in reports]
+        if unknown:
+            self._json(400, {"ok": False, "error": f"unknown report id: {unknown[0]}"})
+            return
+        inbox_path = os.path.join(brief_home, "inbox.jsonl")
+        for rid in ids:
+            atomic_append_line(inbox_path, build_status(rid, "read"))
+        self._json(200, {"ok": True, "read": ids})
+
+    def _post_reopen(self):
+        body, err = self._read_json_body()
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+        ids = body.get("ids", [])
+        if not isinstance(ids, list):
+            self._json(400, {"ok": False, "error": "ids must be an array"})
+            return
+        brief_home = get_brief_home()
+        questions, _, _, _, _ = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
+        unknown = [i for i in ids if i not in questions]
+        if unknown:
+            self._json(400, {"ok": False, "error": f"unknown question id: {unknown[0]}"})
+            return
+        inbox_path = os.path.join(brief_home, "inbox.jsonl")
+        for qid in ids:
+            atomic_append_line(inbox_path, build_status(qid, "reopened"))
+        self._json(200, {"ok": True, "reopened": ids})
+
+    def _post_answer(self):
+        body, err = self._read_json_body()
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+        brief_home = get_brief_home()
+        questions, _, _, _, _ = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
+        err = _validate_answer_body(body, questions)
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+
+        answers = body.get("answers", [])
+        dismiss = body.get("dismiss", [])
+        inbox_path = os.path.join(brief_home, "inbox.jsonl")
+        answers_path = os.path.join(brief_home, "answers.jsonl")
+        for entry in answers:
+            answer, status = build_answer_and_status(
+                entry["id"], chosen=entry.get("chosen"), free_text=entry.get("free_text"))
+            atomic_append_line(answers_path, answer)
+            atomic_append_line(inbox_path, status)
+        for qid in dismiss:
+            atomic_append_line(inbox_path, build_status(qid, "cancelled"))
+
+        result = {"ok": True, "saved": len(answers), "dismissed": len(dismiss),
+                  "dispatched": [], "log_paths": []}
+        dispatch = body.get("dispatch")
+        if dispatch:
+            projects = dispatch.get("projects") or []
+            watch = bool(dispatch.get("watch"))
+            result.update(_run_dispatch(brief_home, projects, watch))
+        self._json(200, result)
+
+
+def make_server(host="127.0.0.1", port=DEFAULT_PORT):
+    """Bind (not yet serving) the Web UI HTTP server. port=0 picks a free
+    ephemeral port - tests read it back from server.server_address[1]."""
+    return ThreadingHTTPServer((host, port), BriefHTTPHandler)
+
+
+def _run_serve(args):
+    port = DEFAULT_PORT
+    i = 0
+    while i < len(args):
+        if args[i] == "--port" and i + 1 < len(args):
+            port = int(args[i + 1])
+            i += 2
+        else:
+            i += 1
+    server = make_server(port=port)
+    print(f"agent-brief-me serving on http://127.0.0.1:{server.server_address[1]}/ "
+          f"(BRIEF_HOME={get_brief_home()})")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(json.dumps({"ok": False, "error": "usage: brief_me.py load | read <report_id>... | answer <qid> [--chosen T]... [--free-text T] | dismiss <qid>... | unconsumed"}))
+    if len(sys.argv) >= 2 and sys.argv[1] == "serve":
+        _run_serve(sys.argv[2:])
+    elif len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        print(json.dumps({"ok": False, "error": "usage: brief_me.py serve [--port N] | load | read <report_id>... | answer <qid> [--chosen T]... [--free-text T] | dismiss <qid>... | unconsumed"}))
         sys.exit(1)
-    print(json.dumps(COMMANDS[sys.argv[1]](sys.argv[2:]), ensure_ascii=False, indent=1))
+    else:
+        print(json.dumps(COMMANDS[sys.argv[1]](sys.argv[2:]), ensure_ascii=False, indent=1))

@@ -108,7 +108,7 @@ Example:
   "properties": {
     "type": { "const": "status" },
     "ref": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
-    "status": { "type": "string", "enum": ["answered", "cancelled", "read"] },
+    "status": { "type": "string", "enum": ["answered", "cancelled", "read", "reopened"] },
     "at": { "type": "string", "format": "date-time" }
   },
   "required": ["type", "ref", "status", "at"],
@@ -117,7 +117,8 @@ Example:
 ```
 
 `ref` is the `id` of the `question` or `report` this status line applies to.
-`answered` and `cancelled` apply to questions; `read` applies to reports.
+`answered`, `cancelled`, and `reopened` apply to questions; `read` applies
+to reports.
 
 Example:
 
@@ -163,7 +164,9 @@ the file in order:
 - **Question state**: find every `status` line with `ref` equal to the
   question's `id`. If none exist, the question is `pending`. Otherwise the
   question's state is the `status` field of the *last* such line
-  (`answered` or `cancelled`).
+  (`answered`, `cancelled`, or `reopened`). A last line of `reopened` folds
+  the question back to `pending`: it reappears among pending questions and
+  can be answered or cancelled again, any number of times.
 - **Report read state**: find every `status` line with `ref` equal to the
   report's `id` and `status == "read"`. If at least one exists, the report
   is read; otherwise it is unread.
@@ -179,7 +182,10 @@ the file in order:
 - A `question` starts `pending` the moment its line is appended.
 - It becomes `answered` or `cancelled` by appending exactly one `status`
   line with `ref` equal to its `id` and the corresponding `status` value.
-  This is the only transition defined; `answered`/`cancelled` are terminal.
+  A `cancelled` question can be reopened by appending a `status` line with
+  `status: "reopened"`, which folds it back to `pending` (see "Question
+  state" above) so it can be answered or cancelled again. `answered` is
+  terminal; `cancelled` can return to `pending` via `reopened`.
 - A `report` starts unread and becomes read by appending a `status` line
   with `ref` equal to its `id` and `status: "read"`.
 - An `answer`'s `consumed` flag starts `false` and becomes `true` by

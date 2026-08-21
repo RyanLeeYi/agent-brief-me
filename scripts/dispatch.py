@@ -249,7 +249,7 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subp
     # The multi-line JSONL prompt is written to a file and referenced by a
     # one-line positional prompt: a long quoted argv with newlines/quotes was
     # silently dropped by the interactive launcher (2026-08-21).
-    prompt_path = os.path.join(cwd, ".harness", "dispatch-prompt.md")
+    prompt_path = os.path.join(get_brief_home(), "prompts", f"{os.path.basename(cwd)}.md")
     os.makedirs(os.path.dirname(prompt_path), exist_ok=True)
     with open(prompt_path, "w", encoding="utf-8") as fh:
         fh.write(prompt)

@@ -21,7 +21,7 @@ Working agents that hit a decision only you can make, or that finish a piece of 
 - **Non-blocking questions** - a worker files a question and keeps going (or finishes); nobody waits on a prompt overnight.
 - **Batch review** - one `/brief-me` shows unread reports, then walks pending questions grouped by project, high severity first.
 - **Dispatch on your answers** - each confirmed project gets a headless `claude -p` worker carrying exactly the answers it has not consumed yet.
-- **Watch mode** - `/brief-me --watch` opens workers as visible interactive windows instead.
+- **Watch mode** - `/brief-me --watch` opens workers as visible interactive windows instead. The first time a project is opened this way Claude Code shows its one-time workspace trust dialog; accept it once per project.
 - **Resumable workers** - every record carries the worker's `session_id`; `claude --resume <id>` reopens that session to ask follow-ups.
 - **Pluggable collector and notifier** - file questions from any source (feature lists, to-do files, webhooks) and get pinged on high-severity ones.
 - **No database, no dependencies** - two append-only JSONL files and the Python standard library. State is derived by folding the files, so an interrupted run never loses anything.

@@ -145,6 +145,8 @@ with open(os.path.expanduser("~/todo.txt")) as f:
 
 任何結構化來源都一樣 - issue tracker webhook、行事曆匯出、掃 log 的 cron - 只要照同一條 atomic-append 規則追加合法紀錄。
 
+完整可用的真實 collector 在 [`examples/feature-list-collector.py`](examples/feature-list-collector.py)：掃每個追蹤 repo 的 `feature_list.json`，對未簽核條目投簽核問題、對已簽核條目投每晚的「run tonight?」提案。檔頭寫明它假設的格式；格式不同就改 `scan_project`。
+
 ### 通知
 
 `config.json` 的 `notify` 也是 argv 陣列（或 `null`）。投出 **high** 嚴重度問題時執行一次，尾端追加該問題的 `project` 與 `title` 兩個參數；`low` 與 `normal` 不觸發。

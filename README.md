@@ -145,6 +145,8 @@ with open(os.path.expanduser("~/todo.txt")) as f:
 
 Any structured source works the same way - an issue tracker webhook, a calendar export, a cron job scraping logs - as long as it appends valid records through the same atomic-append rule.
 
+A complete, real collector is in [`examples/feature-list-collector.py`](examples/feature-list-collector.py): it scans each tracked repo's `feature_list.json` and files sign-off questions for unapproved entries plus a nightly "run tonight?" proposal for approved ones. Its header documents the exact format it assumes; adapt `scan_project` if yours differs.
+
 ### Notifier
 
 `config.json`'s `notify` is also an argv array (or `null`). Submitting a **high**-severity question runs it once with the question's `project` and `title` appended as two trailing arguments; `low` and `normal` never trigger it.

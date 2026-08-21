@@ -51,6 +51,18 @@ git clone https://github.com/RyanLeeYi/agent-brief-me.git ~/.claude/skills/agent
 
 日常只需要一個指令：`/brief-me`（`/agent-brief-me:brief-me` 的簡稱）。
 
+```mermaid
+flowchart LR
+    A["/brief-me<br/>（睡前）"] -->|答案| B[answers.jsonl]
+    B --> C["dispatch.py<br/>每專案一個 claude -p"]
+    C --> D["worker<br/>無人看管地跑"]
+    D -->|"brief-submit<br/>問題／報告"| E[inbox.jsonl]
+    E --> F["/brief-me<br/>（早上）"]
+    F -->|"claude --resume &lt;session_id&gt;"| D
+    F -->|新答案| B
+    G["collector<br/>（選用）"] -.->|問題| E
+```
+
 1. **睡前** - 跑 `/brief-me`。先看進來的東西，逐題回答，然後對每個有新答案的專案問你要不要派後續 worker。
 2. **派工** - 確認的專案各開一個背景 `claude -p` session 在它的 repo 裡，prompt 已塞好你的答案。加 `--watch` 改開可見視窗。
 3. **睡覺** - worker 無人看管地跑。碰到只有你能決定的事就投問題；收工前投一份報告。

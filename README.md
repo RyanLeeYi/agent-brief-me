@@ -51,6 +51,18 @@ To update: `git -C ~/.claude/skills/agent-brief-me pull`. To verify the install:
 
 The only command you run day to day is `/brief-me` (short for `/agent-brief-me:brief-me`).
 
+```mermaid
+flowchart LR
+    A["/brief-me<br/>(before bed)"] -->|answers| B[answers.jsonl]
+    B --> C["dispatch.py<br/>claude -p per project"]
+    C --> D["worker runs<br/>unattended"]
+    D -->|"brief-submit<br/>question / report"| E[inbox.jsonl]
+    E --> F["/brief-me<br/>(morning)"]
+    F -->|"claude --resume &lt;session_id&gt;"| D
+    F -->|new answers| B
+    G["collector<br/>(optional)"] -.->|questions| E
+```
+
 1. **Before bed** - run `/brief-me`. It shows what came in, walks you through pending questions, then offers to dispatch a follow-up worker for each project that has a fresh answer.
 2. **Dispatch** - confirmed projects get a background `claude -p` session in their repo, prompt pre-loaded with your answers. Add `--watch` to open visible windows instead.
 3. **Sleep** - workers run unattended. When blocked on something only you can decide they file a question; before finishing they file a report.

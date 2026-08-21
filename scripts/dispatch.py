@@ -184,6 +184,7 @@ def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str) -> subprocess.P
             stdin=subprocess.PIPE,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
+            env=clean_env(),
         )
     finally:
         log_fh.close()
@@ -194,6 +195,13 @@ def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str) -> subprocess.P
     proc.stdin.write(prompt.encode("utf-8"))
     proc.stdin.close()
     return proc
+
+
+def clean_env() -> dict[str, str]:
+    """Drop CLAUDE* vars inherited from the Claude session that runs this
+    script; otherwise the child is treated as a nested session (transcript
+    off, initial prompt ignored - observed 2026-08-21)."""
+    return {k: v for k, v in os.environ.items() if not k.upper().startswith("CLAUDE")}
 
 
 def spawn_watch(claude_cmd: str, cwd: str, prompt: str) -> subprocess.Popen:
@@ -211,7 +219,10 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str) -> subprocess.Popen:
         fh.write(prompt)
     opener = f"Read {prompt_path} and follow it as your task brief."
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)  # Windows only; 0 elsewhere
-    return subprocess.Popen([claude_cmd, *HEADLESS_ARGS, opener], cwd=cwd, creationflags=flags)
+    # prompt MUST precede HEADLESS_ARGS: `--allowedTools <tools...>` is
+    # variadic and swallows anything after it (verified 2026-08-21).
+    return subprocess.Popen([claude_cmd, opener, *HEADLESS_ARGS], cwd=cwd,
+                            creationflags=flags, env=clean_env())
 
 
 def main(argv: list[str]) -> int:

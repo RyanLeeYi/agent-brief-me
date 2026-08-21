@@ -24,6 +24,9 @@ What it files (questions, severity "normal"):
   - one "[sign-off] <project> <id>: <title>" per failing entry with signed_off == false
   - one "[dispatch] <project>: run tonight? (...)" per project that has any
     signed-off failing entries, with "Run, start with <first id>" recommended
+    and deliberately no "skip" choice (any answer triggers a dispatch; to
+    skip a night, leave it pending). When the set of ids changes, the older
+    pending proposal for that project is marked cancelled.
 
 Idempotent: a question is skipped while one with the identical title is still
 pending. `--dry-run` prints what would be filed without writing.
@@ -81,8 +84,8 @@ def brief_home():
     return os.environ.get("BRIEF_HOME", os.path.expanduser("~/.agent-brief"))
 
 
-def pending_titles(inbox_path):
-    """Titles of questions still pending (no status line referencing them)."""
+def pending_questions(inbox_path):
+    """Pending questions (no status line referencing them): {title: (id, project)}."""
     questions, closed = {}, set()
     try:
         with open(inbox_path, encoding="utf-8") as f:
@@ -95,12 +98,12 @@ def pending_titles(inbox_path):
                 except json.JSONDecodeError:
                     continue
                 if rec.get("type") == "question":
-                    questions[rec["id"]] = rec.get("title", "")
+                    questions[rec["id"]] = (rec.get("title", ""), rec.get("project", ""))
                 elif rec.get("type") == "status":
                     closed.add(rec.get("ref"))
     except OSError:
-        return set()
-    return {t for qid, t in questions.items() if qid not in closed}
+        return {}
+    return {t: (qid, proj) for qid, (t, proj) in questions.items() if qid not in closed}
 
 
 def now_utc():
@@ -165,7 +168,8 @@ def main():
     except (OSError, json.JSONDecodeError) as e:
         sys.exit(f"cannot read {cfg_path}: {e}")
     inbox = os.path.join(home, "inbox.jsonl")
-    already = pending_titles(inbox)
+    pending = pending_questions(inbox)
+    already = set(pending)
     filed = skipped = 0
     for proj in projects:
         name, path = proj.get("name"), proj.get("path")
@@ -180,9 +184,21 @@ def main():
                 "body": clip("\n".join(
                     f"- {f.get('id')}: {f.get('title') or f.get('name') or ''}"
                     for f in signed_failing)),
-                "choices": ["Skip tonight"],
+                # No "skip" choice on purpose: any answer makes dispatch.py spawn a
+                # worker, so "not tonight" must be the UI's Skip (writes nothing).
+                "choices": [],
                 "recommendation": f"Run, start with {first.get('id')}",
             })
+            # A stale proposal for this project (different id set) is superseded:
+            # mark it cancelled so it stops being re-asked.
+            for title, (qid, proj) in list(pending.items()):
+                if proj == name and title.startswith("[dispatch] ") and title != questions[-1]["title"]:
+                    if dry:
+                        print(f"would cancel stale: {title}")
+                    else:
+                        atomic_append_line(inbox, {"type": "status", "ref": qid, "status": "cancelled", "at": now_utc()})
+                        print(f"cancelled stale: {title}")
+                    already.discard(title)
         for q in questions:
             if q["title"] in already:
                 skipped += 1

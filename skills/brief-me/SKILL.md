@@ -46,7 +46,8 @@ For each project, for each question in the given order, call
 AskUserQuestion with `title` as the header, `body` (plus project, severity,
 and the `resume: claude --resume <session_id>` hint when present) as the
 supporting text, and `options` as the choices in the given order
-(recommendation first when present, "Dismiss" then "Skip" always last). When
+(recommendation first when present), then append "Dismiss" and "Skip" as
+the last two options yourself - `load` no longer includes them. When
 the question has `multi: true`, pass `multiSelect: true` so several choices
 can be picked at once (Dismiss/Skip still stand alone). Do not add a "type
 your own" option - the tool already accepts free text.

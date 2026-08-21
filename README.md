@@ -14,10 +14,13 @@ The daily loop:
    fresh, unconsumed answer.
 2. **Dispatch**: each project you confirm gets a background `claude -p`
    session, carrying its unconsumed answers, spawned by
-   `scripts/dispatch.py`.
+   `scripts/dispatch.py`. Run `/brief-me --watch` instead to open each
+   worker as a visible interactive window you can follow along with.
 3. **Sleep**, while the dispatched sessions keep working unattended.
 4. **In the morning**, run `/brief-me` again to review what came in overnight
-   and answer whatever is still pending.
+   and answer whatever is still pending. Every report and question carries
+   the worker's `session_id`; if one is unclear, `cd` into that project and
+   run the shown `claude --resume <session_id>` to ask the worker directly.
 
 The only command you run day to day is `/brief-me`.
 
@@ -45,18 +48,25 @@ Start (or restart) a Claude Code session anywhere, then run:
 /agent-brief-me:brief-init
 ```
 
-to create `~/.agent-brief/` and register the projects you want tracked.
+to create `~/.agent-brief/`, register the projects you want tracked, and
+choose how workers are launched (see "Dispatch settings").
 From then on, day to day, run `/agent-brief-me:brief-me` (called `/brief-me`
 throughout the rest of this README). To confirm the install itself, run
 `claude plugin list`; a working install lists `agent-brief-me@skills-dir`
 under "Skills-directory plugins".
 
+To update later: `git -C ~/.claude/skills/agent-brief-me pull`. Skills are
+read fresh each session, so no reinstall is needed.
+
 ## Skills
 
 - `brief-init` -- one-time, idempotent setup: creates `~/.agent-brief/`,
-  registers projects, and runs a smoke test.
+  registers projects, sets dispatch options, and runs a smoke test. Safe to
+  rerun to change settings.
 - `brief-me` -- the daily review pass: unread reports, pending questions,
-  optional dispatch.
+  optional dispatch. The file handling lives in `scripts/brief_me.py`
+  (`load` / `read` / `answer` / `unconsumed`), so the skill prompt stays
+  small and the inbox never enters the model's context wholesale.
 - `brief-submit` -- used by dispatched sessions themselves (not by you
   directly) to file a question or a report into the inbox without blocking.
 

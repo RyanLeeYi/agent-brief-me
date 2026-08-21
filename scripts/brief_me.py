@@ -154,7 +154,8 @@ def build_read_status(report_id):
 
 def build_option_list(question):
     """Option order for AskUserQuestion: recommendation first (if any),
-    then the remaining choices in array order, always ending in "Skip".
+    then the remaining choices in array order, always ending in "Dismiss"
+    (drop for good) and "Skip" (ask again next time).
     A choice equal to the recommendation is not repeated."""
     options = []
     seen = set()
@@ -166,6 +167,7 @@ def build_option_list(question):
         if choice not in seen:
             options.append(choice)
             seen.add(choice)
+    options.append("Dismiss")
     options.append("Skip")
     return options
 
@@ -269,6 +271,15 @@ def _cmd_answer(args):
     return {"ok": True, "question_id": qid}
 
 
+def _cmd_dismiss(args):
+    """Drop questions for good: append a cancelled status, write no answer."""
+    brief_home = get_brief_home()
+    for qid in args:
+        atomic_append_line(os.path.join(brief_home, "inbox.jsonl"),
+                           {"type": "status", "ref": qid, "status": "cancelled", "at": _now()})
+    return {"ok": True, "dismissed": args}
+
+
 def _cmd_unconsumed(args):
     brief_home = get_brief_home()
     questions, _, _, _ = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
@@ -276,10 +287,10 @@ def _cmd_unconsumed(args):
     return {"projects": unconsumed_projects(questions, answers_by_question)}
 
 
-COMMANDS = {"load": _cmd_load, "read": _cmd_read, "answer": _cmd_answer, "unconsumed": _cmd_unconsumed}
+COMMANDS = {"load": _cmd_load, "read": _cmd_read, "answer": _cmd_answer, "dismiss": _cmd_dismiss, "unconsumed": _cmd_unconsumed}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(json.dumps({"ok": False, "error": "usage: brief_me.py load | read <report_id>... | answer <qid> [--chosen T] [--free-text T] | unconsumed"}))
+        print(json.dumps({"ok": False, "error": "usage: brief_me.py load | read <report_id>... | answer <qid> [--chosen T] [--free-text T] | dismiss <qid>... | unconsumed"}))
         sys.exit(1)
     print(json.dumps(COMMANDS[sys.argv[1]](sys.argv[2:]), ensure_ascii=False, indent=1))

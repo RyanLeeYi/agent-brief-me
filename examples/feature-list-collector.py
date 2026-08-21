@@ -25,8 +25,9 @@ What it files (questions, severity "normal"):
   - one "[dispatch] <project>: run tonight? (...)" per project that has any
     signed-off failing entries, with "Run, start with <first id>" recommended
     and deliberately no "skip" choice (any answer triggers a dispatch; to
-    skip a night, leave it pending). When the set of ids changes, the older
-    pending proposal for that project is marked cancelled.
+    skip a night, leave it pending; to drop it for good, dismiss it in
+    brief-me). A proposal stays pending until answered or dismissed, even if
+    the id set changes and a newer proposal is filed alongside it.
 
 Idempotent: a question is skipped while one with the identical title is still
 pending. `--dry-run` prints what would be filed without writing.
@@ -189,16 +190,6 @@ def main():
                 "choices": [],
                 "recommendation": f"Run, start with {first.get('id')}",
             })
-            # A stale proposal for this project (different id set) is superseded:
-            # mark it cancelled so it stops being re-asked.
-            for title, (qid, proj) in list(pending.items()):
-                if proj == name and title.startswith("[dispatch] ") and title != questions[-1]["title"]:
-                    if dry:
-                        print(f"would cancel stale: {title}")
-                    else:
-                        atomic_append_line(inbox, {"type": "status", "ref": qid, "status": "cancelled", "at": now_utc()})
-                        print(f"cancelled stale: {title}")
-                    already.discard(title)
         for q in questions:
             if q["title"] in already:
                 skipped += 1

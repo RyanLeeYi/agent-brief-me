@@ -60,6 +60,38 @@ under "Skills-directory plugins".
 - `brief-submit` -- used by dispatched sessions themselves (not by you
   directly) to file a question or a report into the inbox without blocking.
 
+## Dispatch settings
+
+`brief-init` writes a `dispatch` object into `~/.agent-brief/config.json`;
+`scripts/dispatch.py` reads it when launching workers. Edit by hand or rerun
+`brief-init`:
+
+```json
+"dispatch": {
+  "watch": false,
+  "permission_mode": "auto",
+  "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
+  "model": null,
+  "delegate": true
+}
+```
+
+- `watch` -- `true` opens an interactive `claude` window per project instead
+  of a headless `claude -p` (same as passing `--watch` to `dispatch.py` or
+  `/brief-me --watch`).
+- `permission_mode` -- `auto` (default) or `acceptEdits`, both combined with
+  `allowed_tools`; or `bypassPermissions`.
+- `model` -- `--model` for the worker session; `null` keeps Claude Code's
+  default.
+- `delegate` -- `false` tells workers to work solo and blocks the `Agent`
+  tool; use it if your repos have no subagent-delegation rules.
+
+> **Warning: `bypassPermissions`** launches workers with
+> `--dangerously-skip-permissions`. Every command -- `rm -rf`, `git push
+> --force`, anything -- runs without confirmation, unattended, possibly
+> overnight. The only safety left is whatever hooks and guards your repos
+> configure themselves. Prefer `auto` plus a tight `allowed_tools`.
+
 ## Collector hook
 
 `~/.agent-brief/config.json`'s `collector` field is an argv array. When set,

@@ -31,6 +31,10 @@ DELEGATION_SENTENCE = (
     "following the user's existing subagent-delegation rules."
 )
 
+NO_DELEGATION_SENTENCE = (
+    "Do the work yourself in this session; do not dispatch subagents."
+)
+
 BRIEF_SUBMIT_SENTENCE = (
     "Use brief-submit in two situations: whenever you are blocked on a "
     "decision only the user can make, and once more, right before "
@@ -134,9 +138,10 @@ def unconsumed_answers_for(
     ]
 
 
-def build_prompt(project: str, unconsumed: list[dict[str, Any]]) -> str:
+def build_prompt(project: str, unconsumed: list[dict[str, Any]], delegate: bool = True) -> str:
     # ponytail: same prompt for headless and --watch; the BRIEF_SUBMIT
     # sentence is harmless in an interactive window (user just sees it).
+    delegation = DELEGATION_SENTENCE if delegate else NO_DELEGATION_SENTENCE
     if unconsumed:
         answers_block = "\n".join(entry["line"] for entry in unconsumed)
     else:
@@ -147,28 +152,56 @@ def build_prompt(project: str, unconsumed: list[dict[str, Any]]) -> str:
         f'for project "{project}".\n\n'
         f"Unconsumed answers for this project (raw JSONL records):\n"
         f"{answers_block}\n\n"
-        f"{DELEGATION_SENTENCE}\n\n"
+        f"{delegation}\n\n"
         f"{BRIEF_SUBMIT_SENTENCE}\n"
     )
 
 
 # Non-interactive `-p` auto-denies every permission prompt, so without an
 # allowlist the worker is read-only (2026-08-20: two dispatched sessions spun
-# for 0 changes). Edits + shell + the brief-submit skill are what a worker needs;
-# everything else (MCP, web, Agent) stays denied.
-# ponytail: flat allowlist, no per-project config; add a config.json key when
-# one project needs a different set.
-HEADLESS_ARGS = [
-    "--permission-mode", "acceptEdits",
-    "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep,Skill",
-]
+# for 0 changes). Defaults below; overridable via config.json "dispatch".
+DISPATCH_DEFAULTS = {
+    "watch": False,
+    "permission_mode": "auto",
+    "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
+    "model": None,
+    "delegate": True,
+}
+PERMISSION_MODES = ("auto", "acceptEdits", "bypassPermissions")
+
+
+def dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
+    raw = config.get("dispatch") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    merged = {**DISPATCH_DEFAULTS, **{k: v for k, v in raw.items() if k in DISPATCH_DEFAULTS}}
+    if merged["permission_mode"] not in PERMISSION_MODES:
+        print(f'config dispatch.permission_mode {merged["permission_mode"]!r} unknown, using "auto"')
+        merged["permission_mode"] = "auto"
+    return merged
+
+
+def claude_args(settings: dict[str, Any]) -> list[str]:
+    """Flags shared by headless and --watch. Must come AFTER the positional
+    prompt: `--allowedTools <tools...>` is variadic and swallows anything
+    after it (verified 2026-08-21)."""
+    if settings["permission_mode"] == "bypassPermissions":
+        args = ["--dangerously-skip-permissions"]
+    else:
+        args = ["--permission-mode", settings["permission_mode"],
+                "--allowedTools", settings["allowed_tools"]]
+    if settings["model"]:
+        args += ["--model", str(settings["model"])]
+    if not settings["delegate"]:
+        args += ["--disallowedTools", "Agent"]
+    return args
 
 
 def make_log_path(brief_home: str, project: str) -> str:
     return os.path.join(brief_home, "logs", f"{project}-{uuid.uuid4().hex}.log")
 
 
-def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str) -> subprocess.Popen:
+def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str, args: list[str]) -> subprocess.Popen:
     """Background-spawn `claude_cmd -p` in cwd, feeding prompt on stdin (this
     sidesteps argv-quoting/length limits for arbitrary JSONL content), with
     combined stdout/stderr redirected to log_path. Does not wait for it to
@@ -179,7 +212,7 @@ def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str) -> subprocess.P
     log_fh = open(log_path, "wb")
     try:
         proc = subprocess.Popen(
-            [claude_cmd, "-p", *HEADLESS_ARGS],
+            [claude_cmd, "-p", *args],
             cwd=cwd,
             stdin=subprocess.PIPE,
             stdout=log_fh,
@@ -204,7 +237,7 @@ def clean_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.upper().startswith("CLAUDE")}
 
 
-def spawn_watch(claude_cmd: str, cwd: str, prompt: str) -> subprocess.Popen:
+def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subprocess.Popen:
     """Open an interactive `claude <prompt>` in a new console window so the
     user can watch it work. Same allowlist as headless so behaviour matches;
     anything outside it still prompts in the window. No log file - the window
@@ -219,14 +252,12 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str) -> subprocess.Popen:
         fh.write(prompt)
     opener = f"Read {prompt_path} and follow it as your task brief."
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)  # Windows only; 0 elsewhere
-    # prompt MUST precede HEADLESS_ARGS: `--allowedTools <tools...>` is
-    # variadic and swallows anything after it (verified 2026-08-21).
-    return subprocess.Popen([claude_cmd, opener, *HEADLESS_ARGS], cwd=cwd,
+    return subprocess.Popen([claude_cmd, opener, *args], cwd=cwd,
                             creationflags=flags, env=clean_env())
 
 
 def main(argv: list[str]) -> int:
-    watch = "--watch" in argv
+    watch_flag = "--watch" in argv
     argv = [a for a in argv if a != "--watch"]
     if not argv:
         print("usage: dispatch.py [--watch] <project> [<project> ...]", file=sys.stderr)
@@ -237,6 +268,9 @@ def main(argv: list[str]) -> int:
 
     config = load_config(brief_home)
     projects_by_name = {p["name"]: p["path"] for p in config.get("projects", [])}
+    settings = dispatch_settings(config)
+    watch = watch_flag or bool(settings["watch"])
+    args = claude_args(settings)
 
     question_project = fold_question_projects(os.path.join(brief_home, "inbox.jsonl"))
     answers_path = os.path.join(brief_home, "answers.jsonl")
@@ -251,14 +285,14 @@ def main(argv: list[str]) -> int:
             continue
 
         unconsumed = unconsumed_answers_for(name, question_project, answers_by_question)
-        prompt = build_prompt(name, unconsumed)
+        prompt = build_prompt(name, unconsumed, delegate=bool(settings["delegate"]))
         log_path = make_log_path(brief_home, name)
 
         try:
             if watch:
-                spawn_watch(claude_cmd, path, prompt)
+                spawn_watch(claude_cmd, path, prompt, args)
             else:
-                spawn(claude_cmd, path, prompt, log_path)
+                spawn(claude_cmd, path, prompt, log_path, args)
         except OSError as exc:
             print(f"{name}: spawn failed: {exc}")
             exit_code = 1

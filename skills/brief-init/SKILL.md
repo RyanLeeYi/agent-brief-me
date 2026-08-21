@@ -65,7 +65,7 @@ Compute `base = os.path.expanduser("~/.agent-brief")`.
    - `answers.jsonl`: create empty (0 bytes).
    - `config.json`: create with exactly this content:
      ```json
-     {"projects": [], "collector": null, "notify": null}
+     {"projects": [], "collector": null, "notify": null, "dispatch": {}}
      ```
 3. If any of the three files already existed, state explicitly that this is
    a rerun on an existing installation and name which files were skipped. If
@@ -91,7 +91,34 @@ Repeat until the user is done:
    its `projects` array, and write the whole file back.
 5. Stop as soon as the user says they are done.
 
-## Step 3: Agent-side protocol sentence
+## Step 3: Dispatch settings
+
+These control how `scripts/dispatch.py` launches worker sessions. Ask the
+four questions below with AskUserQuestion, then read `config.json`, set the
+answers under its `dispatch` object (create it if missing, keep any other
+keys), and write the whole file back. On a rerun, show the current value of
+each as the default option.
+
+1. **Show a terminal window?** -> `watch`: `false` (headless `claude -p`,
+   output goes to `~/.agent-brief/logs/`; default) or `true` (opens an
+   interactive `claude` window per project so the user can watch).
+2. **Permission level?** -> `permission_mode`:
+   - `auto` (default): Claude Code auto mode plus the tool allowlist in
+     `allowed_tools` (default `Bash,Read,Edit,Write,Glob,Grep,Skill`).
+   - `acceptEdits`: file edits auto-approved, same allowlist.
+   - `bypassPermissions`: runs with `--dangerously-skip-permissions`. Before
+     accepting this, print the warning: "Workers will run every command,
+     including destructive ones, with no confirmation, unattended and
+     possibly overnight. Only choose this if the repos' own hooks/guards are
+     what you rely on." Require a second explicit confirmation.
+3. **Model for the worker session?** -> `model`: `null` (Claude Code
+   default) or a model name/alias such as `sonnet`, `opus`.
+4. **May workers delegate to subagents?** -> `delegate`: `true` (default;
+   the prompt authorizes subagents under the user's own delegation rules) or
+   `false` (prompt says to work solo and `Agent` is added to
+   `--disallowedTools`; pick this if the harness has no delegation rules yet).
+
+## Step 4: Agent-side protocol sentence
 
 Print this sentence to the user:
 
@@ -104,7 +131,7 @@ If the user declines, do not modify any file. If the user accepts, ask for
 the target file path and append the sentence to the end of that file's
 existing content; never truncate or overwrite what is already there.
 
-## Step 4: Smoke test
+## Step 5: Smoke test
 
 Run each check in order and report pass/fail as you go, one check at a time:
 

@@ -351,7 +351,9 @@ def _api_state(brief_home):
         last = q_last_status.get(qid)
         if last and last["status"] == "cancelled":
             v = question_view(q)
-            v["dismissed_at"] = last["at"]
+            # Early status lines (brief-init smoke test, 2026-08-20) carry
+            # created_at instead of at; tolerate both, never 500 on old data.
+            v["dismissed_at"] = last.get("at") or last.get("created_at")
             dismissed_by_project[q["project"]].append((q, v))
     payload["dismissed"] = {
         p: [v for _, v in sorted(items, key=lambda t: (SEVERITY_RANK[t[0]["severity"]], t[0]["created_at"]))]

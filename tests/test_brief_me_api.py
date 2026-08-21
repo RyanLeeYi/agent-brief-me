@@ -149,12 +149,19 @@ class BriefMeAPITestCase(unittest.TestCase):
         return self._request("POST", path, body)
 
     # -- GET / ---------------------------------------------------------
-    def test_index_missing_html_returns_500(self):
-        # scripts/brief_me.html is F9's file; not present in this worktree.
-        status, data = self._get("/")
-        self.assertEqual(status, 500)
-        self.assertFalse(data["ok"])
-        self.assertIn("error", data)
+    def test_index_serves_html_or_500_when_missing(self):
+        import urllib.request, urllib.error
+        req = urllib.request.Request(f"http://127.0.0.1:{self.port}/")
+        try:
+            with urllib.request.urlopen(req) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertIn("text/html", resp.headers.get("Content-Type", ""))
+                self.assertIn(b"<html", resp.read().lower())
+        except urllib.error.HTTPError as e:
+            # brief_me.html absent (e.g. a worktree without F9): must be a JSON 500
+            self.assertEqual(e.code, 500)
+            data = json.loads(e.read().decode("utf-8"))
+            self.assertFalse(data["ok"]); self.assertIn("error", data)
 
     # -- GET /api/state --------------------------------------------------
     def test_state_shape_and_multi_options(self):

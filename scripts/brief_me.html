@@ -97,6 +97,26 @@
   .btn-link{ min-height:24px; padding:0 4px; color:var(--accent); font-weight:500; cursor:pointer; }
   .btn-icon{ min-height:40px; width:40px; padding:0; display:flex; align-items:center; justify-content:center; }
 
+  #sidebar-toggle{ flex:0 0 auto; }
+  #app.sidebar-collapsed #sidebar{ display:none; }
+  #sidebar-backdrop{ display:none; }
+  @media (max-width: 768px){
+    #sidebar{
+      position:fixed; top:0; bottom:0; left:0; z-index:40;
+      width:min(84vw, var(--sidebar-width)); flex-basis:auto;
+      transform:translateX(-100%); transition:transform var(--transition);
+      box-shadow:0 0 0 1px var(--border);
+    }
+    #app.sidebar-collapsed #sidebar{ display:flex; }
+    #app.sidebar-open #sidebar{ transform:none; }
+    #app.sidebar-open #sidebar-backdrop{ display:block; position:fixed; inset:0; z-index:30; background:rgba(1,4,9,0.6); }
+    #topbar{ padding:12px 16px; gap:10px; flex-wrap:wrap; }
+    #current-project-name{ font-size:16px; }
+    #header-counts{ flex-basis:100%; order:9; font-size:12px; }
+    #content{ padding:16px; }
+    .other-input-wrap{ min-width:0; flex-basis:100%; }
+  }
+
   /* ---------- main ---------- */
   #main{ flex:1; display:flex; flex-direction:column; min-width:0; }
   #topbar{
@@ -250,8 +270,14 @@
     </div>
   </aside>
 
+  <div id="sidebar-backdrop"></div>
   <main id="main">
     <header id="topbar">
+      <button id="sidebar-toggle" class="btn btn-icon" type="button" title="Toggle sidebar" aria-label="Toggle sidebar" aria-expanded="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+        </svg>
+      </button>
       <h1 id="current-project-name">All projects</h1>
       <span id="header-counts">0 questions &middot; 0 unread reports</span>
       <button id="refresh-btn" class="btn btn-icon" type="button" title="Refresh">
@@ -977,16 +1003,35 @@
   }
 
   // ------------------------------------------------------------- events ----
+  var appEl = document.getElementById('app');
+  var sidebarToggleEl = document.getElementById('sidebar-toggle');
+  var sidebarBackdropEl = document.getElementById('sidebar-backdrop');
+  var mobileMq = window.matchMedia('(max-width: 768px)');
+  function isMobile() { return mobileMq.matches; }
+  function closeDrawer() { appEl.classList.remove('sidebar-open'); }
+  sidebarToggleEl.addEventListener('click', function () {
+    if (isMobile()) {
+      appEl.classList.toggle('sidebar-open');
+    } else {
+      appEl.classList.toggle('sidebar-collapsed');
+    }
+    sidebarToggleEl.setAttribute('aria-expanded', String(isMobile() ? appEl.classList.contains('sidebar-open') : !appEl.classList.contains('sidebar-collapsed')));
+  });
+  sidebarBackdropEl.addEventListener('click', closeDrawer);
+  mobileMq.addEventListener('change', closeDrawer);
+
   projectListEl.addEventListener('click', function (e) {
     var btn = e.target.closest('.side-item');
     if (!btn) return;
     state.currentProject = btn.dataset.project;
     state.view = 'inbox';
     renderApp();
+    if (isMobile()) closeDrawer();
   });
   dismissedEntryEl.addEventListener('click', function () {
     state.view = 'dismissed';
     renderApp();
+    if (isMobile()) closeDrawer();
   });
 
   questionsListEl.addEventListener('click', onQuestionsClick);

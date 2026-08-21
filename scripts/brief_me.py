@@ -239,7 +239,8 @@ def unconsumed_projects(questions, answers_by_question):
 
 def question_view(q):
     v = {k: q.get(k) for k in ("id", "project", "title", "body", "severity", "session_id", "multi") if q.get(k) is not None}
-    v["options"] = build_option_list(q)
+    # API/JSON consumers render Dismiss/Skip themselves; only real choices here.
+    v["options"] = [o for o in build_option_list(q) if o not in ("Dismiss", "Skip")]
     v["age"] = time_ago(q["created_at"])
     return v
 

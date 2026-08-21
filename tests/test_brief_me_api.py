@@ -174,7 +174,7 @@ class BriefMeAPITestCase(unittest.TestCase):
         q = data["pending_questions"]["demo"][0]
         self.assertEqual(q["id"], qid)
         self.assertTrue(q["multi"])
-        self.assertEqual(q["options"], ["A", "B", "Dismiss", "Skip"])
+        self.assertEqual(q["options"], ["A", "B"])
 
     def test_state_does_not_run_collector_but_collect_does(self):
         sentinel = os.path.join(self.home, "sentinel.txt")

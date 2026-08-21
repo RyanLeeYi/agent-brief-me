@@ -1,0 +1,1051 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-brief-me inbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d1117; --bg-sidebar:#0a0e14; --bg-card:#161b22;
+    --border:#21262d; --border-strong:#30363d;
+    --text:#e6edf3; --text-secondary:#c9d1d9; --text-muted:#8b949e;
+    --accent:#3fb950; --accent-bg:rgba(63,185,80,0.12);
+    --btn-primary:#238636; --btn-primary-hover:#2ea043;
+    --danger:#f85149; --danger-2:#ff7b72; --warning:#d29922;
+    --radius:6px; --transition:150ms ease; --sidebar-width:264px;
+  }
+  *{ box-sizing:border-box; }
+  /* Elements with explicit `display` rules below (flex sections, the modal
+     overlay, error text) would otherwise out-specify the UA's default
+     [hidden]{display:none}; this keeps the hidden attribute authoritative. */
+  [hidden]{ display:none !important; }
+  html,body{ margin:0; padding:0; height:100%; }
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:'IBM Plex Sans', system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size:14px; line-height:1.5;
+  }
+  code, .mono{ font-family:'IBM Plex Mono', Consolas, monospace; }
+  button, input{ font-family:inherit; font-size:inherit; color:inherit; }
+  button{ background:none; border:none; }
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  #app{ display:flex; height:100vh; }
+
+  /* ---------- sidebar ---------- */
+  #sidebar{
+    width:var(--sidebar-width); flex:0 0 var(--sidebar-width);
+    background:var(--bg-sidebar); border-right:1px solid var(--border);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  #project-list{ overflow-y:auto; padding:8px; flex:0 1 auto; }
+  .side-item{
+    display:flex; align-items:center; gap:8px; width:100%;
+    min-height:36px; padding:6px 10px; border-radius:var(--radius);
+    cursor:pointer; text-align:left; color:var(--text-secondary);
+    transition:background var(--transition), color var(--transition);
+  }
+  .side-item:hover{ background:var(--bg-card); }
+  .side-item.active{ background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent); }
+  .side-item-name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .side-item-stats{ font-size:12px; color:var(--text-muted); }
+  .side-item.active .side-item-stats{ color:var(--accent); }
+
+  .dot{ width:8px; height:8px; border-radius:50%; flex:0 0 auto; }
+  .dot-red{ background:var(--danger); }
+  .dot-green{ background:var(--accent); }
+  .dot-gray{ background:var(--border-strong); }
+  .dot-hidden{ visibility:hidden; }
+
+  #dismissed-entry{
+    display:block; width:calc(100% - 16px); margin:4px 8px 8px;
+    min-height:36px; padding:6px 10px; border-radius:var(--radius);
+    text-align:left; color:var(--text-secondary); cursor:pointer;
+    border-top:1px solid var(--border);
+    transition:background var(--transition), color var(--transition);
+  }
+  #dismissed-entry:hover{ background:var(--bg-card); }
+  #dismissed-entry.active{ background:var(--accent-bg); color:var(--accent); }
+
+  #answers-panel{
+    margin-top:auto; border-top:1px solid var(--border);
+    padding:12px; display:flex; flex-direction:column; gap:8px;
+  }
+  #unsaved-count{ font-weight:600; color:var(--text-muted); }
+  #unsaved-count.unsaved-count--active{ color:var(--warning); }
+  .answers-project-row{ font-size:12px; color:var(--text-muted); }
+  .dispatch-row{ display:flex; align-items:center; gap:8px; cursor:pointer; min-height:24px; }
+  .dispatch-row.disabled{ color:var(--text-muted); cursor:default; opacity:0.5; }
+  .dispatch-row input[type="checkbox"]{ cursor:pointer; }
+  .dispatch-row.disabled input[type="checkbox"]{ cursor:default; }
+  .answers-note{ font-size:12px; color:var(--text-muted); margin:4px 0 0; }
+
+  /* ---------- buttons ---------- */
+  .btn{
+    min-height:40px; padding:0 16px; border-radius:var(--radius);
+    cursor:pointer; font-weight:600; transition:background var(--transition), opacity var(--transition);
+    border:1px solid var(--border-strong); background:var(--bg-card); color:var(--text);
+  }
+  .btn:hover{ background:var(--border); }
+  .btn-primary{ background:var(--btn-primary); border-color:var(--btn-primary); color:#fff; }
+  .btn-primary:hover{ background:var(--btn-primary-hover); }
+  .btn:disabled{ opacity:0.5; cursor:default; }
+  .btn-secondary{ background:var(--bg-card); }
+  .btn-link{ min-height:24px; padding:0 4px; color:var(--accent); font-weight:500; cursor:pointer; }
+  .btn-icon{ min-height:40px; width:40px; padding:0; display:flex; align-items:center; justify-content:center; }
+
+  /* ---------- main ---------- */
+  #main{ flex:1; display:flex; flex-direction:column; min-width:0; }
+  #topbar{
+    display:flex; align-items:center; gap:16px; padding:16px 32px;
+    border-bottom:1px solid var(--border); flex:0 0 auto;
+  }
+  #current-project-name{ margin:0; font-size:18px; font-weight:600; }
+  #header-counts{ color:var(--text-muted); flex:1; }
+  #content{ flex:1; overflow-y:auto; padding:24px 32px; }
+
+  .section-header{
+    display:flex; align-items:center; gap:8px; width:100%;
+    min-height:36px; cursor:pointer; text-align:left;
+    font-weight:600; font-size:15px; color:var(--text);
+    margin-bottom:8px;
+  }
+  .section-header .chevron{ transition:transform var(--transition); }
+  .section-header.collapsed .chevron{ transform:rotate(-90deg); }
+  .section-header .count{ color:var(--text-muted); font-weight:400; }
+  .section-body{ display:flex; flex-direction:column; gap:12px; margin-bottom:28px; }
+  .empty-state{ color:var(--text-muted); padding:8px 0 16px; }
+
+  /* ---------- question card ---------- */
+  .question-card{
+    position:relative; background:var(--bg-card); border:1px solid var(--border);
+    border-radius:8px; padding:16px;
+  }
+  .question-card .dismiss-overlay{
+    display:none; align-items:center; justify-content:space-between;
+    color:var(--text-muted);
+  }
+  .question-card.dismiss-pending .dismiss-overlay{ display:flex; }
+  .question-card.dismiss-pending .card-body-full{ display:none; }
+
+  .card-meta{ display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .badge{
+    font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em;
+    padding:2px 6px; border-radius:4px; background:var(--border); color:var(--text-secondary);
+  }
+  .badge-high{ background:var(--danger); color:#fff; }
+  .badge-multi{ background:var(--accent-bg); color:var(--accent); text-transform:none; margin-left:6px; }
+  .card-project{ color:var(--text-muted); font-size:12px; }
+  .card-age{ color:var(--text-muted); font-size:12px; margin-left:auto; }
+  .card-title{ margin:0 0 6px; font-size:15px; }
+  .card-body-text{ margin:0 0 12px; color:var(--text-secondary); white-space:pre-wrap; }
+
+  .opt-row, .other-row{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; align-items:center; }
+  .opt-btn{
+    min-height:36px; padding:6px 12px; border-radius:var(--radius);
+    border:1px solid var(--border-strong); background:var(--bg);
+    cursor:pointer; display:flex; align-items:center; gap:6px;
+    transition:background var(--transition), border-color var(--transition), color var(--transition);
+  }
+  .opt-btn:hover{ border-color:var(--accent); }
+  .opt-btn.selected{ border-color:var(--accent); background:var(--accent-bg); color:var(--accent); }
+  .opt-num{ color:var(--text-muted); }
+  .opt-btn.selected .opt-num{ color:var(--accent); }
+  .check-indicator{
+    width:14px; height:14px; border:1px solid var(--border-strong); border-radius:3px; flex:0 0 auto;
+    display:inline-block;
+  }
+  .check-indicator.checked{ background:var(--accent); border-color:var(--accent); }
+
+  .other-row{ align-items:flex-start; }
+  .other-input-wrap{ flex:1; min-width:200px; }
+  .other-input{
+    width:100%; min-height:36px; padding:6px 10px; border-radius:var(--radius);
+    border:1px solid var(--border-strong); background:var(--bg); color:var(--text);
+    transition:border-color var(--transition);
+  }
+  .other-input-wrap.error .other-input{ border-color:var(--danger); }
+  .other-error-msg{ display:block; color:var(--danger-2); font-size:12px; margin-top:4px; }
+
+  .card-footer-row{ display:flex; align-items:center; justify-content:space-between; margin-top:12px; }
+  .resume-cmd{
+    font-family:'IBM Plex Mono', Consolas, monospace; font-size:12px;
+    color:var(--text-secondary); background:var(--bg); border:1px solid var(--border);
+    border-radius:var(--radius); padding:4px 8px; cursor:pointer; min-height:28px;
+  }
+  .resume-cmd:hover{ border-color:var(--accent); }
+  .dismiss-link{ color:var(--danger-2); cursor:pointer; font-size:13px; min-height:28px; }
+  .dismiss-link:hover{ text-decoration:underline; }
+
+  /* ---------- report card ---------- */
+  .report-card{ background:var(--bg-card); border:1px solid var(--border); border-radius:8px; }
+  .report-summary-row{
+    display:flex; align-items:center; gap:10px; width:100%; min-height:44px;
+    padding:10px 16px; cursor:pointer; text-align:left;
+  }
+  .report-summary-first-line{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .report-card .chevron{ transition:transform var(--transition); }
+  .report-card.expanded .chevron{ transform:rotate(180deg); }
+  .report-full{ padding:0 16px 16px; color:var(--text-secondary); white-space:pre-wrap; }
+
+  /* ---------- dismissed view ---------- */
+  .dismissed-filters{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .dismissed-filters select, .dismissed-filters input{
+    min-height:36px; padding:6px 10px; border-radius:var(--radius);
+    border:1px solid var(--border-strong); background:var(--bg-card); color:var(--text);
+  }
+  #dismissed-match-count{ color:var(--text-muted); margin-left:auto; }
+  .dismissed-card{
+    background:var(--bg-card); border:1px solid var(--border); border-radius:8px;
+    padding:16px; margin-bottom:12px; display:flex; align-items:center; gap:16px;
+  }
+  .dismissed-card .card-title{ flex:1; }
+
+  /* ---------- toast ---------- */
+  #toast-container{ position:fixed; right:24px; bottom:24px; display:flex; flex-direction:column; gap:8px; z-index:1000; }
+  .toast{
+    background:var(--bg-card); border:1px solid var(--border-strong); border-radius:var(--radius);
+    padding:12px 16px; max-width:420px; opacity:0; transform:translateY(8px);
+    transition:opacity 200ms ease, transform 200ms ease;
+  }
+  .toast.show{ opacity:1; transform:translateY(0); }
+  .toast-error{ border-color:var(--danger); color:var(--danger-2); }
+  .toast-warning{ border-color:var(--warning); color:var(--warning); }
+
+  /* ---------- confirm dialog ---------- */
+  #confirm-overlay{
+    position:fixed; inset:0; background:rgba(1,4,9,0.7);
+    display:flex; align-items:center; justify-content:center; z-index:1001;
+  }
+  #confirm-dialog{
+    background:var(--bg-card); border:1px solid var(--border-strong); border-radius:8px;
+    padding:24px; max-width:480px; width:90%; max-height:80vh; overflow-y:auto;
+  }
+  #confirm-dialog h2{ margin-top:0; font-size:16px; }
+  #confirm-list{ margin:12px 0; padding-left:20px; color:var(--text-secondary); }
+  .confirm-actions{ display:flex; justify-content:flex-end; gap:12px; margin-top:16px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div id="project-list" role="list"></div>
+    <button id="dismissed-entry" type="button"></button>
+    <div id="answers-panel">
+      <div id="unsaved-count">0 unsaved</div>
+      <div id="answers-projects"></div>
+      <label class="dispatch-row" id="dispatch-row">
+        <input type="checkbox" id="dispatch-checkbox">
+        <span>Dispatch after save</span>
+      </label>
+      <label class="dispatch-row" id="watch-row">
+        <input type="checkbox" id="watch-checkbox" disabled>
+        <span>Open windows (--watch)</span>
+      </label>
+      <button id="save-btn" class="btn btn-primary" type="button" disabled>Save answers</button>
+      <p class="answers-note">Selections aren't written immediately; saved answers wait for the next dispatch.</p>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar">
+      <h1 id="current-project-name">All projects</h1>
+      <span id="header-counts">0 questions &middot; 0 unread reports</span>
+      <button id="refresh-btn" class="btn btn-icon" type="button" title="Refresh">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M13.65 2.35A7 7 0 1 0 15 8h-1.5a5.5 5.5 0 1 1-1.6-3.9L10 6h5V1l-1.35 1.35z" fill="currentColor"/>
+        </svg>
+      </button>
+    </header>
+
+    <div id="content">
+      <div id="inbox-view">
+        <section id="questions-section">
+          <button type="button" class="section-header" id="questions-header">
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 3l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+            <span>Questions</span>
+            <span class="count">(<span id="questions-count">0</span>)</span>
+          </button>
+          <div class="section-body" id="questions-list"></div>
+        </section>
+
+        <section id="reports-section">
+          <button type="button" class="section-header" id="reports-header">
+            <svg class="chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 3l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
+            <span>Reports</span>
+            <span class="count">(<span id="reports-count">0</span>)</span>
+          </button>
+          <div class="section-body" id="reports-list"></div>
+        </section>
+      </div>
+
+      <div id="dismissed-view" hidden>
+        <div class="dismissed-filters">
+          <select id="dismissed-project-filter"></select>
+          <input type="text" id="dismissed-search" placeholder="Filter by title...">
+          <span id="dismissed-match-count"></span>
+        </div>
+        <div id="dismissed-list"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container" aria-live="polite"></div>
+
+<div id="confirm-overlay" hidden>
+  <div id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <h2 id="confirm-title">These questions haven't been answered, skipped, or dismissed</h2>
+    <ul id="confirm-list"></ul>
+    <div class="confirm-actions">
+      <button id="confirm-back" class="btn btn-secondary" type="button">Back</button>
+      <button id="confirm-skip-save" class="btn btn-primary" type="button">Skip them and save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- DOM ----
+  var sidebarEl = document.getElementById('sidebar');
+  var projectListEl = document.getElementById('project-list');
+  var dismissedEntryEl = document.getElementById('dismissed-entry');
+  var unsavedCountEl = document.getElementById('unsaved-count');
+  var answersProjectsEl = document.getElementById('answers-projects');
+  var dispatchRowEl = document.getElementById('dispatch-row');
+  var dispatchCheckboxEl = document.getElementById('dispatch-checkbox');
+  var watchRowEl = document.getElementById('watch-row');
+  var watchCheckboxEl = document.getElementById('watch-checkbox');
+  var saveBtnEl = document.getElementById('save-btn');
+
+  var currentProjectNameEl = document.getElementById('current-project-name');
+  var headerCountsEl = document.getElementById('header-counts');
+  var refreshBtnEl = document.getElementById('refresh-btn');
+
+  var inboxViewEl = document.getElementById('inbox-view');
+  var dismissedViewEl = document.getElementById('dismissed-view');
+
+  var questionsHeaderEl = document.getElementById('questions-header');
+  var questionsCountEl = document.getElementById('questions-count');
+  var questionsListEl = document.getElementById('questions-list');
+  var reportsHeaderEl = document.getElementById('reports-header');
+  var reportsCountEl = document.getElementById('reports-count');
+  var reportsListEl = document.getElementById('reports-list');
+
+  var dismissedProjectFilterEl = document.getElementById('dismissed-project-filter');
+  var dismissedSearchEl = document.getElementById('dismissed-search');
+  var dismissedMatchCountEl = document.getElementById('dismissed-match-count');
+  var dismissedListEl = document.getElementById('dismissed-list');
+
+  var toastContainerEl = document.getElementById('toast-container');
+  var confirmOverlayEl = document.getElementById('confirm-overlay');
+  var confirmListEl = document.getElementById('confirm-list');
+  var confirmBackBtn = document.getElementById('confirm-back');
+  var confirmSkipBtn = document.getElementById('confirm-skip-save');
+
+  // -------------------------------------------------------------- state ----
+  var state = {
+    data: emptyState(),
+    view: 'inbox',            // 'inbox' | 'dismissed'
+    currentProject: '__all__',
+    selections: {},            // question id -> per-question UI record ("qui")
+    reportsReadLocally: {},    // report id -> true, once /api/read has been posted this page life
+    collapsed: { questions: false, reports: false },
+    dismissedFilter: { project: '__all__', query: '' }
+  };
+
+  function emptyState() {
+    return {
+      collector_warning: null, unread_reports: {}, pending_questions: {},
+      unconsumed_projects: [], projects: [], unconsumed_counts: {}, dismissed: {}
+    };
+  }
+
+  function getQUI(id, question) {
+    var existing = state.selections[id];
+    if (existing) return existing;
+    var fresh = {
+      multi: !!question.multi,
+      skip: false,
+      optionValue: null,
+      selectedSet: {},   // used as a Set via keys
+      otherSelected: false,
+      otherText: '',
+      otherError: false,
+      dismissPending: false
+    };
+    state.selections[id] = fresh;
+    return fresh;
+  }
+  function setSel(set, value) { set[value] = true; }
+  function delSel(set, value) { delete set[value]; }
+  function hasSel(set, value) { return !!set[value]; }
+  function selSize(set) { return Object.keys(set).length; }
+  function selValues(set) { return Object.keys(set); }
+
+  // ---------------------------------------------------------------- api ----
+  function apiGet(path) {
+    return fetch(path).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok) throw new Error(data.error || (res.status + ' ' + res.statusText));
+        return data;
+      });
+    });
+  }
+  function apiPost(path, body) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        if (!res.ok || data.ok === false) throw new Error(data.error || (res.status + ' ' + res.statusText));
+        return data;
+      });
+    });
+  }
+
+  // -------------------------------------------------------------- utils ----
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function firstLine(s) {
+    var idx = String(s == null ? '' : s).indexOf('\n');
+    return idx === -1 ? s : s.slice(0, idx);
+  }
+  function toast(message, type) {
+    var el = document.createElement('div');
+    el.className = 'toast' + (type ? ' toast-' + type : '');
+    el.textContent = message;
+    toastContainerEl.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('show'); });
+    setTimeout(function () {
+      el.classList.remove('show');
+      setTimeout(function () { el.remove(); }, 200);
+    }, 6000);
+  }
+  function copyText(text, btn) {
+    function done() {
+      if (!btn) return;
+      var original = btn.dataset.origText || btn.textContent;
+      btn.dataset.origText = original;
+      btn.textContent = 'Copied!';
+      setTimeout(function () { btn.textContent = original; }, 1200);
+    }
+    var promise;
+    if (navigator.clipboard && window.isSecureContext) {
+      promise = navigator.clipboard.writeText(text).catch(fallback);
+    } else {
+      promise = Promise.resolve().then(fallback);
+    }
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) { /* best effort */ }
+      document.body.removeChild(ta);
+    }
+    promise.then(done);
+  }
+
+  // ------------------------------------------------------------ project ----
+  function projectStats(project) {
+    var pq = state.data.pending_questions, ur = state.data.unread_reports;
+    var questions = project === '__all__'
+      ? Object.keys(pq).reduce(function (acc, p) { return acc.concat(pq[p]); }, [])
+      : (pq[project] || []);
+    var reports = project === '__all__'
+      ? Object.keys(ur).reduce(function (acc, p) { return acc.concat(ur[p]); }, [])
+      : (ur[project] || []);
+    var hasHigh = questions.some(function (q) { return q.severity === 'high'; });
+    var dot = hasHigh ? 'red' : ((questions.length + reports.length) > 0 ? 'green' : 'gray');
+    return { unread: reports.length, pending: questions.length, dot: dot };
+  }
+
+  function getAllQuestionsFlat() {
+    var pq = state.data.pending_questions;
+    var out = [];
+    Object.keys(pq).forEach(function (project) {
+      pq[project].forEach(function (q) { out.push({ question: q, project: project }); });
+    });
+    return out;
+  }
+  function getVisibleQuestions() {
+    if (state.currentProject === '__all__') return getAllQuestionsFlat();
+    return (state.data.pending_questions[state.currentProject] || []).map(function (q) {
+      return { question: q, project: state.currentProject };
+    });
+  }
+  function getVisibleReports() {
+    var ur = state.data.unread_reports;
+    if (state.currentProject === '__all__') {
+      var out = [];
+      Object.keys(ur).forEach(function (project) {
+        ur[project].forEach(function (r) { out.push({ report: r, project: project }); });
+      });
+      return out;
+    }
+    return (ur[state.currentProject] || []).map(function (r) {
+      return { report: r, project: state.currentProject };
+    });
+  }
+
+  // -------------------------------------------------------------- save -----
+  function computePayload() {
+    var answers = [];
+    var dismiss = [];
+    var answerProjects = {};
+    getAllQuestionsFlat().forEach(function (entry) {
+      var question = entry.question, project = entry.project;
+      var qui = getQUI(question.id, question);
+      if (qui.dismissPending) { dismiss.push(question.id); return; }
+      if (qui.skip) return;
+      if (question.multi) {
+        var chosen = selValues(qui.selectedSet);
+        var record = { id: question.id };
+        var has = false;
+        if (chosen.length) { record.chosen = chosen; has = true; }
+        if (qui.otherSelected) { record.free_text = qui.otherText; has = true; }
+        if (has) { answers.push(record); answerProjects[project] = true; }
+      } else {
+        if (qui.optionValue !== null) {
+          answers.push({ id: question.id, chosen: qui.optionValue });
+          answerProjects[project] = true;
+        } else if (qui.otherSelected) {
+          answers.push({ id: question.id, free_text: qui.otherText });
+          answerProjects[project] = true;
+        }
+      }
+    });
+    return { answers: answers, dismiss: dismiss, answerProjects: answerProjects };
+  }
+
+  function updateAnswersPanel() {
+    var payload = computePayload();
+    var n = payload.answers.length + payload.dismiss.length;
+    unsavedCountEl.textContent = n + ' unsaved';
+    unsavedCountEl.classList.toggle('unsaved-count--active', n > 0);
+
+    var counts = {};
+    state.data.projects.forEach(function (p) {
+      counts[p] = { n: 0, saved: state.data.unconsumed_counts[p] || 0 };
+    });
+    payload.answers.forEach(function (a) {
+      var q = findQuestionById(a.id);
+      if (!q) return;
+      if (!counts[q.project]) counts[q.project] = { n: 0, saved: 0 };
+      counts[q.project].n++;
+    });
+    var rows = Object.keys(counts).filter(function (p) { return counts[p].n > 0 || counts[p].saved > 0; })
+      .map(function (p) {
+        return '<div class="answers-project-row">' + escapeHtml(p) + ': ' + counts[p].n + ' new &middot; ' + counts[p].saved + ' saved</div>';
+      });
+    answersProjectsEl.innerHTML = rows.join('');
+
+    var dispatchChecked = dispatchCheckboxEl.checked;
+    watchCheckboxEl.disabled = !dispatchChecked;
+    watchRowEl.classList.toggle('disabled', !dispatchChecked);
+    if (!dispatchChecked) watchCheckboxEl.checked = false;
+
+    var label, disabled = false;
+    if (n > 0 && !dispatchChecked) {
+      label = 'Save ' + n + ' answers';
+    } else if (n > 0 && dispatchChecked) {
+      label = 'Save ' + n + ' and dispatch';
+    } else if (n === 0 && dispatchChecked && state.data.unconsumed_projects.length > 0) {
+      label = 'Dispatch ' + state.data.unconsumed_projects.length + ' projects';
+    } else {
+      label = 'Save answers';
+      disabled = true;
+    }
+    saveBtnEl.textContent = label;
+    saveBtnEl.disabled = disabled;
+  }
+
+  function findQuestionById(id) {
+    var entry = getAllQuestionsFlat().filter(function (e) { return e.question.id === id; })[0];
+    return entry ? { question: entry.question, project: entry.project } : null;
+  }
+
+  function showConfirmDialog(untouched) {
+    confirmListEl.innerHTML = untouched.map(function (e) {
+      return '<li>' + escapeHtml(e.project) + ': ' + escapeHtml(e.question.title) + '</li>';
+    }).join('');
+    confirmOverlayEl.hidden = false;
+    return new Promise(function (resolve) {
+      function cleanup(result) {
+        confirmOverlayEl.hidden = true;
+        confirmBackBtn.removeEventListener('click', onBack);
+        confirmSkipBtn.removeEventListener('click', onSkip);
+        resolve(result);
+      }
+      function onBack() { cleanup(false); }
+      function onSkip() { cleanup(true); }
+      confirmBackBtn.addEventListener('click', onBack);
+      confirmSkipBtn.addEventListener('click', onSkip);
+    });
+  }
+
+  function handleSaveClick() {
+    var allQ = getAllQuestionsFlat();
+    var invalid = allQ.filter(function (e) {
+      var qui = getQUI(e.question.id, e.question);
+      return !qui.dismissPending && qui.otherSelected && qui.otherText.trim() === '';
+    });
+    if (invalid.length) {
+      invalid.forEach(function (e) {
+        var qui = getQUI(e.question.id, e.question);
+        qui.otherError = true;
+        var card = questionsListEl.querySelector('.question-card[data-id="' + CSS.escape(e.question.id) + '"]');
+        if (card) refreshCardVisual(card, qui, e.question);
+      });
+      toast('Fix the highlighted "Other" answers before saving.', 'error');
+      return;
+    }
+    var untouched = allQ.filter(function (e) {
+      var qui = getQUI(e.question.id, e.question);
+      return !qui.dismissPending && !qui.skip && qui.optionValue === null && !qui.otherSelected && selSize(qui.selectedSet) === 0;
+    });
+    if (untouched.length) {
+      showConfirmDialog(untouched).then(function (proceed) {
+        if (proceed) doSave();
+      });
+      return;
+    }
+    doSave();
+  }
+
+  function doSave() {
+    var payload = computePayload();
+    var body = { answers: payload.answers, dismiss: payload.dismiss };
+    var watch = watchCheckboxEl.checked;
+    if (dispatchCheckboxEl.checked) {
+      var set = {};
+      Object.keys(payload.answerProjects).forEach(function (p) { set[p] = true; });
+      state.data.unconsumed_projects.forEach(function (p) { set[p] = true; });
+      body.dispatch = { projects: Object.keys(set).sort(), watch: watch };
+    }
+    saveBtnEl.disabled = true;
+    apiPost('/api/answer', body).then(function (res) {
+      state.selections = {};
+      return reloadState().then(function () {
+        showSaveResultToast(res, watch);
+      });
+    }).catch(function (err) {
+      toast('Save failed: ' + err.message, 'error');
+    }).then(function () {
+      updateAnswersPanel();
+    });
+  }
+
+  function showSaveResultToast(res, watch) {
+    var parts = ['Saved ' + res.saved, 'dismissed ' + res.dismissed];
+    if (res.dispatched && res.dispatched.length) {
+      parts.push('dispatched: ' + res.dispatched.join(', '));
+      if (watch) {
+        parts.push('opened windows');
+      } else if (res.log_paths && res.log_paths.length) {
+        parts.push('logs: ' + res.log_paths.join(', '));
+      }
+    }
+    toast(parts.join('. '), 'info');
+    if (res.dispatch_error) toast('Dispatch error: ' + res.dispatch_error, 'error');
+  }
+
+  // --------------------------------------------------------- rendering ----
+  function renderApp() {
+    renderSidebar();
+    updateHeader();
+    if (state.view === 'inbox') {
+      inboxViewEl.hidden = false;
+      dismissedViewEl.hidden = true;
+      renderQuestions();
+      renderReports();
+    } else {
+      inboxViewEl.hidden = true;
+      dismissedViewEl.hidden = false;
+      renderDismissedView();
+    }
+    updateAnswersPanel();
+  }
+
+  function updateHeader() {
+    currentProjectNameEl.textContent = state.currentProject === '__all__' ? 'All projects' : state.currentProject;
+    var stats = projectStats(state.currentProject);
+    headerCountsEl.textContent = stats.pending + ' questions · ' + stats.unread + ' unread reports';
+  }
+
+  function renderSidebar() {
+    var items = ['__all__'].concat(state.data.projects);
+    projectListEl.innerHTML = items.map(function (p) {
+      var stats = projectStats(p);
+      var label = p === '__all__' ? 'All projects' : p;
+      var active = state.view === 'inbox' && state.currentProject === p;
+      return '<button type="button" class="side-item' + (active ? ' active' : '') + '" data-project="' + escapeHtml(p) + '">' +
+        '<span class="dot dot-' + stats.dot + '"></span>' +
+        '<span class="side-item-name">' + escapeHtml(label) + '</span>' +
+        '<span class="side-item-stats">' + stats.unread + ' · ' + stats.pending + '</span>' +
+        '</button>';
+    }).join('');
+
+    var totalDismissed = Object.keys(state.data.dismissed).reduce(function (n, p) {
+      return n + state.data.dismissed[p].length;
+    }, 0);
+    dismissedEntryEl.textContent = 'Dismissed (' + totalDismissed + ')';
+    dismissedEntryEl.classList.toggle('active', state.view === 'dismissed');
+  }
+
+  function renderQuestions() {
+    var items = getVisibleQuestions();
+    questionsCountEl.textContent = items.length;
+    if (!items.length) {
+      questionsListEl.innerHTML = '<p class="empty-state">No pending questions.</p>';
+      return;
+    }
+    questionsListEl.innerHTML = items.map(function (e) { return questionCardHTML(e.question, e.project); }).join('');
+    items.forEach(function (e) {
+      var card = questionsListEl.querySelector('.question-card[data-id="' + CSS.escape(e.question.id) + '"]');
+      var qui = getQUI(e.question.id, e.question);
+      refreshCardVisual(card, qui, e.question);
+    });
+  }
+
+  function questionCardHTML(question, project) {
+    var qui = getQUI(question.id, question);
+    var isHigh = question.severity === 'high';
+    var options = question.options || [];
+    var optionsHtml = options.map(function (opt, i) {
+      return '<button type="button" class="opt-btn" data-action="option" data-value="' + escapeHtml(opt) + '">' +
+        (question.multi ? '<span class="check-indicator" aria-hidden="true"></span>' : '') +
+        '<span class="opt-num">' + (i + 1) + '.</span> ' + escapeHtml(opt) +
+        '</button>';
+    }).join('');
+    var resumeHtml = question.session_id
+      ? '<button type="button" class="resume-cmd" data-action="copy-resume" data-session="' + escapeHtml(question.session_id) + '" title="Click to copy">claude --resume ' + escapeHtml(question.session_id) + '</button>'
+      : '<span></span>';
+    return '' +
+      '<article class="question-card" data-id="' + escapeHtml(question.id) + '">' +
+        '<div class="dismiss-overlay">' +
+          '<span>Will be dismissed on save</span>' +
+          '<button type="button" class="btn-link" data-action="undo-dismiss">Undo</button>' +
+        '</div>' +
+        '<div class="card-body-full">' +
+          '<div class="card-meta">' +
+            (isHigh ? '<span class="badge badge-high">high</span>' : '<span class="badge">' + escapeHtml(question.severity) + '</span>') +
+            '<span class="card-project">' + escapeHtml(project) + '</span>' +
+            '<span class="card-age">' + escapeHtml(question.age || '') + '</span>' +
+          '</div>' +
+          '<h3 class="card-title">' + escapeHtml(question.title) + (question.multi ? ' <span class="badge badge-multi">multi</span>' : '') + '</h3>' +
+          '<p class="card-body-text">' + escapeHtml(question.body || '') + '</p>' +
+          '<div class="opt-row">' +
+            optionsHtml +
+            '<button type="button" class="opt-btn" data-action="skip">Skip for now</button>' +
+          '</div>' +
+          '<div class="other-row">' +
+            '<button type="button" class="opt-btn" data-action="other">' +
+              (question.multi ? '<span class="check-indicator" aria-hidden="true"></span>' : '') +
+              'Other answer' +
+            '</button>' +
+            '<div class="other-input-wrap">' +
+              '<input type="text" class="other-input" placeholder="Type an answer..." value="' + escapeHtml(qui.otherText) + '">' +
+              '<span class="other-error-msg" hidden>This answer needs some text.</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="card-footer-row">' +
+            resumeHtml +
+            '<button type="button" class="dismiss-link" data-action="dismiss" title="Permanently discard">Dismiss question</button>' +
+          '</div>' +
+        '</div>' +
+      '</article>';
+  }
+
+  function refreshCardVisual(card, qui, question) {
+    if (!card) return;
+    var optionButtons = card.querySelectorAll('[data-action="option"]');
+    for (var i = 0; i < optionButtons.length; i++) {
+      var btn = optionButtons[i];
+      var val = btn.dataset.value;
+      var selected = question.multi ? hasSel(qui.selectedSet, val) : qui.optionValue === val;
+      btn.classList.toggle('selected', selected);
+      var chk = btn.querySelector('.check-indicator');
+      if (chk) chk.classList.toggle('checked', selected);
+    }
+    var skipBtn = card.querySelector('[data-action="skip"]');
+    if (skipBtn) skipBtn.classList.toggle('selected', qui.skip);
+    var otherBtn = card.querySelector('[data-action="other"]');
+    if (otherBtn) {
+      otherBtn.classList.toggle('selected', qui.otherSelected);
+      var otherChk = otherBtn.querySelector('.check-indicator');
+      if (otherChk) otherChk.classList.toggle('checked', qui.otherSelected);
+    }
+    var inputWrap = card.querySelector('.other-input-wrap');
+    if (inputWrap) inputWrap.classList.toggle('error', !!qui.otherError);
+    var errorMsg = card.querySelector('.other-error-msg');
+    if (errorMsg) errorMsg.hidden = !qui.otherError;
+    card.classList.toggle('dismiss-pending', !!qui.dismissPending);
+  }
+
+  function onQuestionsClick(e) {
+    var card = e.target.closest('.question-card');
+    if (!card) return;
+    var qid = card.dataset.id;
+    var entry = findQuestionById(qid);
+    if (!entry) return;
+    var question = entry.question;
+    var qui = getQUI(qid, question);
+
+    var optBtn = e.target.closest('[data-action="option"]');
+    var skipBtn = e.target.closest('[data-action="skip"]');
+    var otherBtn = e.target.closest('[data-action="other"]');
+    var dismissBtn = e.target.closest('[data-action="dismiss"]');
+    var undoBtn = e.target.closest('[data-action="undo-dismiss"]');
+    var copyBtn = e.target.closest('[data-action="copy-resume"]');
+
+    if (copyBtn) { copyText('claude --resume ' + copyBtn.dataset.session, copyBtn); return; }
+
+    if (optBtn) {
+      var value = optBtn.dataset.value;
+      if (question.multi) {
+        if (hasSel(qui.selectedSet, value)) delSel(qui.selectedSet, value); else setSel(qui.selectedSet, value);
+        qui.skip = false;
+      } else {
+        qui.optionValue = value; qui.otherSelected = false; qui.skip = false;
+      }
+    } else if (skipBtn) {
+      qui.skip = true; qui.optionValue = null; qui.otherSelected = false; qui.selectedSet = {};
+    } else if (otherBtn) {
+      if (question.multi) { qui.otherSelected = !qui.otherSelected; }
+      else { qui.otherSelected = true; qui.optionValue = null; }
+      qui.skip = false;
+    } else if (dismissBtn) {
+      qui.dismissPending = true;
+    } else if (undoBtn) {
+      qui.dismissPending = false;
+    } else {
+      return;
+    }
+    refreshCardVisual(card, qui, question);
+    updateAnswersPanel();
+  }
+
+  function onQuestionsInput(e) {
+    if (!e.target.classList.contains('other-input')) return;
+    var card = e.target.closest('.question-card');
+    var qid = card.dataset.id;
+    var entry = findQuestionById(qid);
+    if (!entry) return;
+    var question = entry.question;
+    var qui = getQUI(qid, question);
+    qui.otherText = e.target.value;
+    if (e.target.value.length > 0) {
+      qui.otherSelected = true;
+      qui.skip = false;
+      if (!question.multi) qui.optionValue = null;
+    }
+    qui.otherError = false;
+    refreshCardVisual(card, qui, question);
+    updateAnswersPanel();
+  }
+
+  function onQuestionsBlur(e) {
+    if (!e.target.classList || !e.target.classList.contains('other-input')) return;
+    var card = e.target.closest('.question-card');
+    var qid = card.dataset.id;
+    var entry = findQuestionById(qid);
+    if (!entry) return;
+    var question = entry.question;
+    var qui = getQUI(qid, question);
+    if (qui.otherSelected && qui.otherText.trim() === '') qui.otherError = true;
+    refreshCardVisual(card, qui, question);
+  }
+
+  function renderReports() {
+    var items = getVisibleReports();
+    reportsCountEl.textContent = items.length;
+    if (!items.length) {
+      reportsListEl.innerHTML = '<p class="empty-state">No unread reports.</p>';
+      return;
+    }
+    reportsListEl.innerHTML = items.map(function (e) { return reportCardHTML(e.report, e.project); }).join('');
+  }
+
+  function reportCardHTML(report, project) {
+    var isRead = !!state.reportsReadLocally[report.id];
+    var resumeHtml = report.session_id
+      ? '<button type="button" class="resume-cmd" data-action="copy-resume" data-session="' + escapeHtml(report.session_id) + '" title="Click to copy">claude --resume ' + escapeHtml(report.session_id) + '</button>'
+      : '';
+    return '' +
+      '<article class="report-card" data-id="' + escapeHtml(report.id) + '">' +
+        '<button type="button" class="report-summary-row" data-action="toggle-report">' +
+          '<span class="dot ' + (isRead ? 'dot-hidden' : 'dot-green') + '"></span>' +
+          '<span class="card-project">' + escapeHtml(project) + '</span>' +
+          '<span class="report-summary-first-line">' + escapeHtml(firstLine(report.summary)) + '</span>' +
+          '<span class="card-age">' + escapeHtml(report.age || '') + '</span>' +
+          '<svg class="chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 3l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>' +
+        '</button>' +
+        '<div class="report-full" hidden>' +
+          '<p>' + escapeHtml(report.summary) + '</p>' +
+          resumeHtml +
+        '</div>' +
+      '</article>';
+  }
+
+  function onReportsClick(e) {
+    var toggleBtn = e.target.closest('[data-action="toggle-report"]');
+    var copyBtn = e.target.closest('[data-action="copy-resume"]');
+    if (copyBtn) { copyText('claude --resume ' + copyBtn.dataset.session, copyBtn); return; }
+    if (!toggleBtn) return;
+    var card = toggleBtn.closest('.report-card');
+    var id = card.dataset.id;
+    var full = card.querySelector('.report-full');
+    full.hidden = !full.hidden;
+    card.classList.toggle('expanded', !full.hidden);
+    if (!full.hidden && !state.reportsReadLocally[id]) {
+      state.reportsReadLocally[id] = true;
+      var dot = card.querySelector('.dot');
+      if (dot) dot.classList.add('dot-hidden');
+      apiPost('/api/read', { ids: [id] }).catch(function (err) {
+        toast('Failed to mark report as read: ' + err.message, 'error');
+      });
+    }
+  }
+
+  function renderDismissedView() {
+    var projectOptions = ['__all__'].concat(state.data.projects);
+    var selectHtml = projectOptions.map(function (p) {
+      return '<option value="' + escapeHtml(p) + '">' + escapeHtml(p === '__all__' ? 'All projects' : p) + '</option>';
+    }).join('');
+    if (dismissedProjectFilterEl.innerHTML !== selectHtml) dismissedProjectFilterEl.innerHTML = selectHtml;
+    if (dismissedProjectFilterEl.value !== state.dismissedFilter.project) dismissedProjectFilterEl.value = state.dismissedFilter.project;
+    if (dismissedSearchEl.value !== state.dismissedFilter.query) dismissedSearchEl.value = state.dismissedFilter.query;
+
+    var all = [];
+    Object.keys(state.data.dismissed).forEach(function (project) {
+      state.data.dismissed[project].forEach(function (q) { all.push({ question: q, project: project }); });
+    });
+    var query = state.dismissedFilter.query.toLowerCase();
+    var filtered = all.filter(function (e) {
+      if (state.dismissedFilter.project !== '__all__' && e.project !== state.dismissedFilter.project) return false;
+      if (query && e.question.title.toLowerCase().indexOf(query) === -1) return false;
+      return true;
+    });
+    dismissedMatchCountEl.textContent = 'Matching ' + filtered.length + ' / ' + all.length;
+    dismissedListEl.innerHTML = filtered.length
+      ? filtered.map(function (e) { return dismissedCardHTML(e.question, e.project); }).join('')
+      : '<p class="empty-state">No dismissed questions.</p>';
+  }
+
+  function dismissedCardHTML(q, project) {
+    return '' +
+      '<article class="dismissed-card" data-id="' + escapeHtml(q.id) + '">' +
+        '<div style="flex:1">' +
+          '<div class="card-meta">' +
+            '<span class="card-project">' + escapeHtml(project) + '</span>' +
+            '<span class="card-age">dismissed ' + escapeHtml(q.dismissed_at || '') + '</span>' +
+          '</div>' +
+          '<h4 class="card-title">' + escapeHtml(q.title) + '</h4>' +
+        '</div>' +
+        '<button type="button" class="btn btn-secondary" data-action="restore">Restore</button>' +
+      '</article>';
+  }
+
+  function onDismissedClick(e) {
+    var btn = e.target.closest('[data-action="restore"]');
+    if (!btn) return;
+    var card = btn.closest('.dismissed-card');
+    var id = card.dataset.id;
+    btn.disabled = true;
+    apiPost('/api/reopen', { ids: [id] }).then(function () {
+      return reloadState();
+    }).then(function () {
+      state.view = 'inbox';
+      renderApp();
+    }).catch(function (err) {
+      btn.disabled = false;
+      toast('Restore failed: ' + err.message, 'error');
+    });
+  }
+
+  // ------------------------------------------------------------- events ----
+  projectListEl.addEventListener('click', function (e) {
+    var btn = e.target.closest('.side-item');
+    if (!btn) return;
+    state.currentProject = btn.dataset.project;
+    state.view = 'inbox';
+    renderApp();
+  });
+  dismissedEntryEl.addEventListener('click', function () {
+    state.view = 'dismissed';
+    renderApp();
+  });
+
+  questionsListEl.addEventListener('click', onQuestionsClick);
+  questionsListEl.addEventListener('input', onQuestionsInput);
+  questionsListEl.addEventListener('blur', onQuestionsBlur, true);
+
+  reportsListEl.addEventListener('click', onReportsClick);
+
+  questionsHeaderEl.addEventListener('click', function () {
+    state.collapsed.questions = !state.collapsed.questions;
+    document.getElementById('questions-list').hidden = state.collapsed.questions;
+    questionsHeaderEl.classList.toggle('collapsed', state.collapsed.questions);
+  });
+  reportsHeaderEl.addEventListener('click', function () {
+    state.collapsed.reports = !state.collapsed.reports;
+    document.getElementById('reports-list').hidden = state.collapsed.reports;
+    reportsHeaderEl.classList.toggle('collapsed', state.collapsed.reports);
+  });
+
+  dismissedProjectFilterEl.addEventListener('change', function (e) {
+    state.dismissedFilter.project = e.target.value;
+    renderDismissedView();
+  });
+  dismissedSearchEl.addEventListener('input', function (e) {
+    state.dismissedFilter.query = e.target.value;
+    renderDismissedView();
+  });
+  dismissedListEl.addEventListener('click', onDismissedClick);
+
+  dispatchCheckboxEl.addEventListener('change', updateAnswersPanel);
+  watchCheckboxEl.addEventListener('change', updateAnswersPanel);
+  saveBtnEl.addEventListener('click', handleSaveClick);
+
+  refreshBtnEl.addEventListener('click', function () {
+    apiPost('/api/collect', {}).then(function (res) {
+      if (res.collector_warning) toast(res.collector_warning, 'warning');
+      return reloadState();
+    }).catch(function (err) {
+      toast('Refresh failed: ' + err.message, 'error');
+    });
+  });
+
+  function reloadState() {
+    return apiGet('/api/state').then(function (data) {
+      state.data = data;
+      state.reportsReadLocally = {};
+      renderApp();
+    });
+  }
+
+  // -------------------------------------------------------------- init ----
+  apiGet('/api/state').then(function (data) {
+    state.data = data;
+    renderApp();
+  }).catch(function (err) {
+    toast('Failed to load: ' + err.message, 'error');
+    renderApp();
+  });
+})();
+</script>
+</body>
+</html>

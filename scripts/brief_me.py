@@ -225,7 +225,7 @@ def _cmd_load(args):
     questions, reports, pending, unread = fold_inbox(os.path.join(brief_home, "inbox.jsonl"))
     answers_by_question = fold_answers(os.path.join(brief_home, "answers.jsonl"))
     def q_view(q):
-        v = {k: q.get(k) for k in ("id", "project", "title", "body", "severity", "session_id") if q.get(k) is not None}
+        v = {k: q.get(k) for k in ("id", "project", "title", "body", "severity", "session_id", "multi") if q.get(k) is not None}
         v["options"] = build_option_list(q)
         v["age"] = time_ago(q["created_at"])
         return v
@@ -251,17 +251,19 @@ def _cmd_read(args):
 
 
 def _cmd_answer(args):
-    # answer <question_id> [--chosen TEXT] [--free-text TEXT]
-    qid, chosen, free_text = args[0], None, None
+    # answer <question_id> [--chosen TEXT]... [--free-text TEXT]
+    # --chosen may repeat for multi: true questions; one value stays a string.
+    qid, chosen_list, free_text = args[0], [], None
     rest = args[1:]
     while rest:
         flag, val, rest = rest[0], rest[1] if len(rest) > 1 else None, rest[2:]
         if flag == "--chosen":
-            chosen = val
+            chosen_list.append(val)
         elif flag == "--free-text":
             free_text = val
         else:
             return {"ok": False, "error": f"unknown flag {flag}"}
+    chosen = None if not chosen_list else (chosen_list[0] if len(chosen_list) == 1 else chosen_list)
     if chosen is None and free_text is None:
         return {"ok": False, "error": "need --chosen and/or --free-text"}
     brief_home = get_brief_home()
@@ -291,6 +293,6 @@ COMMANDS = {"load": _cmd_load, "read": _cmd_read, "answer": _cmd_answer, "dismis
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(json.dumps({"ok": False, "error": "usage: brief_me.py load | read <report_id>... | answer <qid> [--chosen T] [--free-text T] | dismiss <qid>... | unconsumed"}))
+        print(json.dumps({"ok": False, "error": "usage: brief_me.py load | read <report_id>... | answer <qid> [--chosen T]... [--free-text T] | dismiss <qid>... | unconsumed"}))
         sys.exit(1)
     print(json.dumps(COMMANDS[sys.argv[1]](sys.argv[2:]), ensure_ascii=False, indent=1))

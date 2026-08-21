@@ -54,6 +54,7 @@ Python's stdlib: `str(uuid.uuid4())`.
     "title": { "type": "string", "minLength": 1 },
     "body": { "type": "string" },
     "choices": { "type": "array", "items": { "type": "string" } },
+    "multi": { "type": "boolean", "description": "true when more than one choice may be picked; the answer's chosen is then an array. Default false." },
     "recommendation": { "type": "string" },
     "severity": { "type": "string", "enum": ["low", "normal", "high"] },
     "created_at": { "type": "string", "format": "date-time" },
@@ -133,7 +134,7 @@ Example:
   "type": "object",
   "properties": {
     "question_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
-    "chosen": { "type": "string" },
+    "chosen": { "oneOf": [ { "type": "string" }, { "type": "array", "items": { "type": "string" }, "minItems": 1 } ], "description": "one choice, or an array when the question has multi: true" },
     "free_text": { "type": "string" },
     "answered_at": { "type": "string", "format": "date-time" },
     "consumed": { "type": "boolean" }

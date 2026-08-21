@@ -31,6 +31,7 @@ skill generates both.
 | `body` | no | string; defaults to `""` |
 | `choices` | no | array of strings |
 | `recommendation` | no | string |
+| `multi` | no | `true` when several `choices` may be picked together; the answer's `chosen` then comes back as an array |
 | `severity` | no | one of `low`, `normal`, `high`; defaults to `normal` |
 
 Rejected (nothing is written, error explains why) when: `project` is
@@ -158,6 +159,8 @@ def submit_question(payload, base=None):
     _stamp_session(record)
     if "choices" in payload:
         record["choices"] = payload["choices"]
+    if payload.get("multi") is True:
+        record["multi"] = True
     if "recommendation" in payload:
         record["recommendation"] = payload["recommendation"]
     return _finish(record, base)

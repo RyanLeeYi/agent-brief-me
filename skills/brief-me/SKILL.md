@@ -46,13 +46,16 @@ For each project, for each question in the given order, call
 AskUserQuestion with `title` as the header, `body` (plus project, severity,
 and the `resume: claude --resume <session_id>` hint when present) as the
 supporting text, and `options` as the choices in the given order
-(recommendation first when present, "Dismiss" then "Skip" always last). Do
-not add a "type your own" option - the tool already accepts free text.
+(recommendation first when present, "Dismiss" then "Skip" always last). When
+the question has `multi: true`, pass `multiSelect: true` so several choices
+can be picked at once (Dismiss/Skip still stand alone). Do not add a "type
+your own" option - the tool already accepts free text.
 
 - **Skip** picked: write nothing; the question stays pending for next time.
 - **Dismiss** picked: drop it for good, no answer written:
   `python scripts/brief_me.py dismiss <question_id>`
-- **A listed option** picked: `--chosen "<exact option text>"`.
+- **A listed option** picked: `--chosen "<exact option text>"`; for a
+  multi-select answer repeat `--chosen` once per picked option.
 - **Free text** typed: `--free-text "<text>"` (pass both if the tool reports both).
 
 ```

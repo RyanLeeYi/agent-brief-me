@@ -73,8 +73,12 @@ read fresh each session, so no reinstall is needed.
 ## Dispatch settings
 
 `brief-init` writes a `dispatch` object into `~/.agent-brief/config.json`;
-`scripts/dispatch.py` reads it when launching workers. Edit by hand or rerun
-`brief-init`:
+`scripts/dispatch.py` reads it when launching workers. To change settings
+later, edit that file directly in any editor - it costs no tokens and takes
+effect on the next dispatch, no restart needed. Rerunning `brief-init` also
+works (it skips existing files and re-asks the settings) but spends a few
+thousand tokens on the walkthrough. Missing keys fall back to the defaults
+shown below; an unknown `permission_mode` falls back to `auto`.
 
 ```json
 "dispatch": {

@@ -155,11 +155,20 @@ def submit_question(payload, base=None):
         "severity": payload.get("severity", "normal"),
         "created_at": _now(),
     }
+    _stamp_session(record)
     if "choices" in payload:
         record["choices"] = payload["choices"]
     if "recommendation" in payload:
         record["recommendation"] = payload["recommendation"]
     return _finish(record, base)
+
+
+def _stamp_session(record):
+    """Record the submitting Claude Code session so the user can reopen it
+    with `claude --resume <id>` and ask follow-ups. Absent outside Claude."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    if sid:
+        record["session_id"] = sid
 
 
 def submit_report(payload, base=None):
@@ -176,6 +185,7 @@ def submit_report(payload, base=None):
         "summary": summary,
         "created_at": _now(),
     }
+    _stamp_session(record)
     if payload.get("severity") is not None:
         record["severity"] = payload["severity"]
     return _finish(record, base)

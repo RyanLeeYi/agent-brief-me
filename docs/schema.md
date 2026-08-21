@@ -56,7 +56,8 @@ Python's stdlib: `str(uuid.uuid4())`.
     "choices": { "type": "array", "items": { "type": "string" } },
     "recommendation": { "type": "string" },
     "severity": { "type": "string", "enum": ["low", "normal", "high"] },
-    "created_at": { "type": "string", "format": "date-time" }
+    "created_at": { "type": "string", "format": "date-time" },
+    "session_id": { "type": "string", "description": "Claude Code session that submitted this; reopen with `claude --resume <session_id>` in the project directory. Optional." }
   },
   "required": ["type", "id", "project", "title", "body", "severity", "created_at"],
   "additionalProperties": false
@@ -82,7 +83,8 @@ Example:
     "project": { "type": "string", "minLength": 1 },
     "summary": { "type": "string", "minLength": 1 },
     "severity": { "type": "string", "enum": ["low", "normal", "high"] },
-    "created_at": { "type": "string", "format": "date-time" }
+    "created_at": { "type": "string", "format": "date-time" },
+    "session_id": { "type": "string", "description": "Claude Code session that submitted this; reopen with `claude --resume <session_id>` in the project directory. Optional." }
   },
   "required": ["type", "id", "project", "summary", "created_at"],
   "additionalProperties": false

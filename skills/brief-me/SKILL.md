@@ -268,7 +268,10 @@ the order `sort_reports_by_age` returns (oldest first).
 For each report, in order:
 
 1. Display it under its project's heading, showing `summary` and
-   `time_ago(report["created_at"])`.
+   `time_ago(report["created_at"])`. If the record has a `session_id`, add
+   one line: `resume: claude --resume <session_id>` (run inside the
+   project's directory) so the user can reopen that worker and ask
+   follow-ups.
 2. Immediately append its read marker:
    `atomic_append_line(inbox_path, build_read_status(report["id"]))`.
 
@@ -292,7 +295,10 @@ For each question, in order:
    `options` as the choices (in that order, so a recommendation - when
    present - is the first option and "Skip" is always the last). Mention
    the project and severity when presenting it, so the user can follow the
-   project/severity grouping as they go. Do not add a separate "type your
+   project/severity grouping as they go. If the question has a
+   `session_id`, include `resume: claude --resume <session_id>` in the
+   supporting text - the user can open that session to ask the worker what
+   it meant before answering. Do not add a separate "type your
    own answer" option - AskUserQuestion always accepts free text typed
    instead of a listed choice; that is the tool's built-in behavior, not
    something this skill adds. When `choices` and `recommendation` are both

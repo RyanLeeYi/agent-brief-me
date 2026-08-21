@@ -22,6 +22,7 @@ Working agents that hit a decision only you can make, or that finish a piece of 
 - **Batch review** - one `/brief-me` shows unread reports, then walks pending questions grouped by project, high severity first.
 - **Dispatch on your answers** - each confirmed project gets a headless `claude -p` worker carrying exactly the answers it has not consumed yet.
 - **Watch mode** - `/brief-me --watch` opens workers as visible interactive windows instead. The first time a project is opened this way Claude Code shows its one-time workspace trust dialog; accept it once per project.
+- **Web UI** - `brief_me.py serve` gives the same inbox as a local page: zero tokens, click to answer, dismiss and restore questions, dispatch from the browser.
 - **Resumable workers** - every record carries the worker's `session_id`; `claude --resume <id>` reopens that session to ask follow-ups.
 - **Pluggable collector and notifier** - file questions from any source (feature lists, to-do files, webhooks) and get pinged on high-severity ones.
 - **No database, no dependencies** - two append-only JSONL files and the Python standard library. State is derived by folding the files, so an interrupted run never loses anything.
@@ -53,11 +54,11 @@ The only command you run day to day is `/brief-me` (short for `/agent-brief-me:b
 
 ```mermaid
 flowchart LR
-    A["/brief-me<br/>(before bed)"] -->|answers| B[answers.jsonl]
+    A["/brief-me or Web UI<br/>(before bed)"] -->|answers| B[answers.jsonl]
     B --> C["dispatch.py<br/>claude -p per project"]
     C --> D["worker runs<br/>unattended"]
     D -->|"brief-submit<br/>question / report"| E[inbox.jsonl]
-    E --> F["/brief-me<br/>(morning)"]
+    E --> F["/brief-me or Web UI<br/>(morning)"]
     F -->|"claude --resume &lt;session_id&gt;"| D
     F -->|new answers| B
     G["collector<br/>(optional)"] -.->|questions| E
@@ -89,6 +90,24 @@ Nothing is ever rewritten in place. Current state is always re-derived by foldin
 | `brief-init` | you, once | creates `~/.agent-brief/`, registers projects, sets dispatch options, smoke-tests |
 | `brief-me` | you, daily | the review pass; file handling is in `scripts/brief_me.py` so the inbox never enters the model's context wholesale |
 | `brief-submit` | workers | fire-and-forget write of a question or report; never waits for an answer |
+
+## Web UI
+
+A local page for the same inbox, for when you would rather click than chat - it costs no tokens because no model is involved:
+
+```sh
+python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve        # http://127.0.0.1:8765
+python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve --port 9000
+```
+
+It binds to 127.0.0.1 only, reads and appends the same two JSONL files as `/brief-me` (mix the two freely), and its Refresh button runs the configured collector. Each question offers its choices, a free-text "Other answer", and "Skip for now"; nothing is written until you press Save. What each decision writes:
+
+| Decision | Written | Effect |
+|---|---|---|
+| A choice or Other answer | `answers.jsonl` + `answered` status | answer waits for the next dispatch |
+| Skip for now | nothing | asked again next time |
+| Dismiss question | `cancelled` status | gone from the inbox; the Dismissed page lists it with a Restore button, which writes `reopened` |
+| Dispatch after save (checkbox) | - | after saving, runs `scripts/dispatch.py` for every project with unconsumed answers; `--watch` opens visible windows instead of headless sessions |
 
 ## Dispatch settings
 

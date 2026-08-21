@@ -22,6 +22,7 @@
 - **批次審閱** - 一個 `/brief-me` 先列未讀報告，再依專案分組、高嚴重度優先逐題走完待答問題。
 - **照你的答案派工** - 每個你確認的專案開一個 headless `claude -p` worker，只帶它尚未消費的答案。
 - **觀察模式** - `/brief-me --watch` 改成開可見的互動視窗，讓你盯著看。某個專案第一次這樣開時，Claude Code 會跳一次性的資料夾信任對話框，每個專案按一次即可。
+- **Web UI** - `brief_me.py serve` 把同一個收件匣變成本機網頁：零 token、點選作答、丟棄與還原問題、直接從瀏覽器派工。
 - **可接續的 worker** - 每筆紀錄都帶 worker 的 `session_id`，`claude --resume <id>` 就能回到那個 session 追問。
 - **可插拔的 collector 與通知** - 從任何來源（feature list、待辦檔、webhook）投問題，高嚴重度時通知你。
 - **沒有資料庫、沒有依賴** - 兩個只追加的 JSONL 檔加 Python 標準函式庫。狀態靠折疊檔案推導，中途斷掉不會丟任何東西。
@@ -53,11 +54,11 @@ git clone https://github.com/RyanLeeYi/agent-brief-me.git ~/.claude/skills/agent
 
 ```mermaid
 flowchart LR
-    A["/brief-me<br/>（睡前）"] -->|答案| B[answers.jsonl]
+    A["/brief-me 或 Web UI<br/>（睡前）"] -->|答案| B[answers.jsonl]
     B --> C["dispatch.py<br/>每專案一個 claude -p"]
     C --> D["worker<br/>無人看管地跑"]
     D -->|"brief-submit<br/>問題／報告"| E[inbox.jsonl]
-    E --> F["/brief-me<br/>（早上）"]
+    E --> F["/brief-me 或 Web UI<br/>（早上）"]
     F -->|"claude --resume &lt;session_id&gt;"| D
     F -->|新答案| B
     G["collector<br/>（選用）"] -.->|問題| E
@@ -89,6 +90,24 @@ flowchart LR
 | `brief-init` | 你，一次 | 建 `~/.agent-brief/`、登記專案、設派工選項、smoke test |
 | `brief-me` | 你，每天 | 審閱流程；檔案處理在 `scripts/brief_me.py`，收件匣不會整份進模型 context |
 | `brief-submit` | worker | 投一筆問題或報告就走，從不等答案 |
+
+## Web UI
+
+同一個收件匣的本機網頁版，想用點的不想用聊的就開它——沒有模型參與，所以零 token：
+
+```sh
+python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve        # http://127.0.0.1:8765
+python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve --port 9000
+```
+
+只綁 127.0.0.1，讀寫的是與 `/brief-me` 相同的兩個 JSONL 檔（兩者可混用），Refresh 鈕會跑設定的 collector。每題提供選項、自由填寫的「Other answer」與「Skip for now」；按 Save 之前什麼都不會寫入。各種處置寫什麼：
+
+| 處置 | 寫入 | 效果 |
+|---|---|---|
+| 選項或 Other answer | `answers.jsonl` ＋ `answered` 狀態 | 答案等待下一次派工 |
+| Skip for now | 不寫 | 下次再問 |
+| Dismiss question | `cancelled` 狀態 | 從收件匣消失；Dismissed 頁列出並提供 Restore，按下寫 `reopened` |
+| Dispatch after save（勾選） | - | 儲存後對所有有未消費答案的專案執行 `scripts/dispatch.py`；`--watch` 改開可見視窗而非 headless session |
 
 ## 派工設定
 

@@ -2,5 +2,56 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F12",
+      "title": "notify 放寬：report 與所有 question 都觸發，argv 帶 type 與 severity",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "skills/brief-submit/SKILL.md",
+        "README.md",
+        "docs/schema.md",
+        "tests/test_brief_submit_notify.py"
+      ],
+      "requires": [
+        "F3"
+      ],
+      "acceptance": [
+        "brief-submit 成功 append 任一筆 question 或 report 後，若 config.json 的 notify 非 null，恰呼叫一次 notify，argv 為 `<notify...> <project> <type> <severity> <text>`：type 屬 {question,report}；severity 為記錄的 severity，缺省時 question 填 normal、report 填 none；text 為 question 的 title 或 report summary 的第一行。",
+        "notify 為 null 時不呼叫；notify 執行失敗不撤銷 append、回傳仍為成功並附 warning（維持 F3 既有語意）。",
+        "README 與 skills/brief-submit/SKILL.md 的 notify 契約段改成上述 argv（英文），移除『只有 high 觸發』的描述；~/.claude/scripts/brief-notify.py 為使用者側範例，不在本 repo 內、不列驗收。",
+        "tests/test_brief_submit_notify.py（stdlib only，`python tests/test_brief_submit_notify.py`）：以一支把 argv 寫進檔案的假 notify 腳本驗證——low question、high question、report 各呼叫一次且 argv 正確；notify 為 null 時檔案不存在；notify 指向不存在的程式時 append 仍成功。"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "F13",
+      "title": "派工記錄、側欄 running 狀態與整批完成通知",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "scripts/dispatch.py",
+        "scripts/brief_me.py",
+        "scripts/brief_me.html",
+        "docs/schema.md",
+        "README.md",
+        "tests/test_dispatch_batch.py",
+        "tests/test_brief_me_html.py"
+      ],
+      "requires": [
+        "F8",
+        "F9",
+        "F12"
+      ],
+      "acceptance": [
+        "dispatch.py 每成功 spawn 一個 session 就往 ~/.agent-brief/dispatches.jsonl append 一行 {batch_id, project, pid, started_at, log}（append-only，docs/schema.md 補這個檔的定義；--watch 模式同樣記錄）。",
+        "同一次 dispatch.py 執行的所有 session 共用一個 batch_id；dispatch.py 不阻塞等待，而是另起一個背景 waiter 行程，待該批所有 pid 結束後往 dispatches.jsonl append 一行 {batch_id, finished_at, exit_codes}，並在 config.json notify 非 null 時呼叫一次 notify，argv 為 `<notify...> <project 以逗號串接> batch none <N/N sessions finished>`。",
+        "GET /api/state 多一個 `running` 欄位：{專案名: {started_at, elapsed_seconds}}，只含 dispatches.jsonl 裡已 started 且所屬 batch 尚未 finished、且 pid 仍存活的 session（pid 判活用 stdlib；判不出就視為存活）。",
+        "Web UI 側欄：專案有 running 時在名稱旁顯示 `running <elapsed>`（格式沿用既有 age），Refresh 後消失條件同上；All projects 列不顯示。",
+        "tests/test_dispatch_batch.py（stdlib only）：用 `python -c \"import time;time.sleep(1)\"` 代替 claude 指令跑 dispatch.py 兩個專案，驗證 dispatches.jsonl 先有兩行 started、waiter 結束後多一行 finished 且 exit_codes 全 0、假 notify 收到 `batch none 2/2 sessions finished`；tests/test_brief_me_html.py 加一個 scene：stub 回傳 running 時側欄出現 `running`。"
+      ],
+      "evidence": []
+    }
+  ]
 }

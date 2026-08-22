@@ -6,7 +6,7 @@
     {
       "id": "F15",
       "title": "Sessions：以 report 判定完成，不以 pid 存活",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "touches": [
         "scripts/brief_me.py",
@@ -25,6 +25,10 @@
         "Web UI Finished 列：`ended_by` 為 report 時顯示 badge `REPORT` 並省略 exit code；為 exit 時維持現狀。Running 卡片不變。",
         "docs/schema.md 的 sessions 段落補一句：running 的結案來源有 waiter finished 與 report 兩種，並說明 report 比對規則。",
         "tests：test_brief_me_api.py 加 case——fixture 一筆 pid 存活（os.getpid）無 finished 的 started 記錄，inbox 有一筆同 project、created_at 晚於 started_at 的 report → 該 session 在 finished 且 ended_by=report、exit_code=null、頂層 running 不含該專案；另一筆 report created_at 早於 started_at → 仍在 running。test_brief_me_html.py 加 scene：stub finished 元素帶 ended_by=report 時列上出現 `REPORT` 且不含 `exit`。"
+      ],
+      "evidence": [
+        "py -3.13 tests/test_brief_me_api.py (17), test_brief_me_html.py (12 scenes) OK (2026-08-22)",
+        "acceptance-verifier 5/5 pass at 2c66c53"
       ]
     }
   ]

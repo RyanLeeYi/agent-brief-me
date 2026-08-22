@@ -180,13 +180,15 @@ with open(os.path.expanduser("~/todo.txt")) as f:
 
 ### 通知
 
-`config.json` 的 `notify` 也是 argv 陣列（或 `null`）。投出 **high** 嚴重度問題時執行一次，尾端追加該問題的 `project` 與 `title` 兩個參數；`low` 與 `normal` 不觸發。
+`config.json` 的 `notify` 也是 argv 陣列（或 `null`）。每一筆投遞（question 或 report、任何嚴重度）都執行一次，尾端追加四個參數：`<project> <type> <severity> <text>`——`type` 是 `question` 或 `report`，`severity` 是該記錄的嚴重度（question 未填為 `normal`、report 未填為 `none`），`text` 是問題標題或報告摘要首行。要不要推播由你的腳本決定。
 
 ```json
 {"projects": [], "collector": null, "notify": ["python3", "/path/to/send-telegram.py"]}
 ```
 
-你的腳本會收到像 `send-telegram.py my-project "prod deploy blocked: pick a rollback strategy"` 這樣的呼叫。
+你的腳本會收到像 `send-telegram.py my-project question high "prod deploy blocked: pick a rollback strategy"` 或 `send-telegram.py my-project report none "F12 passing; no blockers; session-handoff.md"` 這樣的呼叫。
+
+`dispatch.py` 在整批 worker 都結束時也會呼叫一次，`type` 為 `batch`：`send-telegram.py my-project,other-project batch none "2/2 sessions finished"`。等待由獨立的背景行程負責，dispatch 本身仍立即返回。
 
 ### 讓其他 session 也用收件匣
 

@@ -9,8 +9,7 @@ Non-blocking delivery into `~/.agent-brief/inbox.jsonl`. This skill has one
 contract: validate, write one line, return. It never waits for a reply and
 never reads `~/.agent-brief/answers.jsonl` - checking for an answer is a
 different skill's job, not this one's. Every call below returns immediately
-after the append (and, for a high-severity question, after running
-`notify`).
+after the append (and after running `notify`, if configured).
 
 ## When to use which entry point
 

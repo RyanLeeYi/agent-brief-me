@@ -2,5 +2,30 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F15",
+      "title": "Sessions：以 report 判定完成，不以 pid 存活",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "scripts/brief_me.py",
+        "scripts/brief_me.html",
+        "docs/schema.md",
+        "tests/test_brief_me_api.py",
+        "tests/test_brief_me_html.py",
+        "tests/_stub_api.py"
+      ],
+      "requires": [
+        "F14"
+      ],
+      "acceptance": [
+        "GET /api/state 的 sessions.running 判定改為：該 session 的 batch 無 finished 記錄、pid 存活、**且** inbox.jsonl 中不存在「同 project 且 created_at ≥ 該 session started_at」的 report。三者任一不成立就不算 running。",
+        "滿足「pid 存活、batch 無 finished、但已有符合上條的 report」的 session 歸入 sessions.finished，元素多一個 `ended_by` 欄位：值為 `\"report\"`；finished_at 取該 report 的 created_at（多筆取最早一筆），duration_seconds 據此計算，exit_code 為 null。原本由 waiter finished 記錄結案的元素 `ended_by` 為 `\"exit\"`。7 天窗口與排序規則不變。既有頂層 `running` 欄位套用同一判定（report 結案的專案不再顯示 running）。",
+        "Web UI Finished 列：`ended_by` 為 report 時顯示 badge `REPORT` 並省略 exit code；為 exit 時維持現狀。Running 卡片不變。",
+        "docs/schema.md 的 sessions 段落補一句：running 的結案來源有 waiter finished 與 report 兩種，並說明 report 比對規則。",
+        "tests：test_brief_me_api.py 加 case——fixture 一筆 pid 存活（os.getpid）無 finished 的 started 記錄，inbox 有一筆同 project、created_at 晚於 started_at 的 report → 該 session 在 finished 且 ended_by=report、exit_code=null、頂層 running 不含該專案；另一筆 report created_at 早於 started_at → 仍在 running。test_brief_me_html.py 加 scene：stub finished 元素帶 ended_by=report 時列上出現 `REPORT` 且不含 `exit`。"
+      ]
+    }
+  ]
 }

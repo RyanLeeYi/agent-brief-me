@@ -197,7 +197,11 @@ the file in order:
 ## `dispatches.jsonl`
 
 Written only by `scripts/dispatch.py`; append-only like the other files.
-Two shapes, discriminated by `type`:
+`--watch` dispatches also pre-accept the one-time workspace trust dialog by
+flipping `hasTrustDialogAccepted` to `true` for the project in claude.json
+(default `~/.claude.json`, overridable via `BRIEF_CLAUDE_JSON` for testing);
+headless (`-p`) dispatches never touch claude.json. Two shapes, discriminated
+by `type`:
 
 ```json
 {"type": "started", "batch_id": "<uuid4 shared by one dispatch.py run>", "project": "my-project", "pid": 12345, "started_at": "2026-08-22T01:02:03Z", "log": "/path/to/logs/my-project-<hex>.log", "tasks": ["Which datastore for the inbox?"]}

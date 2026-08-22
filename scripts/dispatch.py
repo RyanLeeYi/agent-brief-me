@@ -13,16 +13,20 @@ for a dispatched session to finish: every spawn is recorded in
 dispatches.jsonl and a detached waiter (`--wait`) records the batch's end
 and runs config.json's `notify` once.
 
-Stdlib only. Two knobs exist purely for testing without a real `claude`
-binary or a real ~/.agent-brief:
+Stdlib only. Three knobs exist purely for testing without a real `claude`
+binary, a real ~/.agent-brief, or a real ~/.claude.json:
 - BRIEF_HOME: overrides the inbox home directory (default ~/.agent-brief).
 - BRIEF_CLAUDE_CMD: overrides the claude executable name (default "claude").
+- BRIEF_CLAUDE_JSON: overrides the claude.json path used to pre-accept the
+  workspace trust dialog before a --watch window opens (default
+  ~/.claude.json). Not read in headless (-p) mode.
 """
 
 import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -261,6 +265,50 @@ def clean_env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.upper().startswith("CLAUDE")}
 
 
+def get_claude_json_path() -> str:
+    return os.environ.get("BRIEF_CLAUDE_JSON", os.path.expanduser("~/.claude.json"))
+
+
+def ensure_trusted(claude_json_path: str, project_path: str) -> bool:
+    """Mark project_path trust-dialog-accepted in Claude Code's claude.json,
+    so a --watch window never blocks on the one-time workspace trust prompt.
+
+    Returns True if the file was rewritten (the project's
+    `hasTrustDialogAccepted` was missing or not True), False if it was
+    already True (file left untouched). The project key matches Claude
+    Code's own claude.json format: absolute path, forward slashes, no
+    trailing slash (e.g. "C:/Users/x/repo"). A project missing from
+    `projects` gets a new entry.
+
+    Raises FileNotFoundError if claude_json_path doesn't exist,
+    json.JSONDecodeError if it isn't valid JSON, and OSError if the atomic
+    write fails - callers wanting fail-open behaviour should catch
+    (OSError, ValueError) around this call (see main()).
+    """
+    with open(claude_json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    key = os.path.abspath(project_path).replace("\\", "/").rstrip("/")
+    entry = data.setdefault("projects", {}).setdefault(key, {})
+    if entry.get("hasTrustDialogAccepted") is True:
+        return False
+    entry["hasTrustDialogAccepted"] = True
+
+    directory = os.path.dirname(os.path.abspath(claude_json_path)) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".claude-json-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, claude_json_path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+    return True
+
+
 def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subprocess.Popen:
     """Open an interactive `claude <prompt>` in a new console window so the
     user can watch it work. Same allowlist as headless so behaviour matches;
@@ -367,6 +415,7 @@ def main(argv: list[str]) -> int:
 
     brief_home = get_brief_home()
     claude_cmd = os.environ.get("BRIEF_CLAUDE_CMD", "claude")
+    claude_json_path = get_claude_json_path()
 
     config = load_config(brief_home)
     projects_by_name = {p["name"]: p["path"] for p in config.get("projects", [])}
@@ -391,6 +440,14 @@ def main(argv: list[str]) -> int:
         unconsumed = unconsumed_answers_for(name, question_project, answers_by_question)
         prompt = build_prompt(name, unconsumed, delegate=bool(settings["delegate"]))
         log_path = make_log_path(brief_home, name)
+
+        if watch:
+            try:
+                if ensure_trusted(claude_json_path, path):
+                    print(f"{name}: trusted {path}")
+            except (OSError, ValueError) as exc:
+                print(f"warning: {name}: could not pre-accept trust dialog in "
+                      f"{claude_json_path} ({exc}), continuing", file=sys.stderr)
 
         try:
             if watch:

@@ -2,5 +2,26 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F16",
+      "title": "--watch 派工前預先 trust 專案目錄，避免互動視窗卡在 trust 對話框",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "scripts/dispatch.py",
+        "tests/test_dispatch_trust.py",
+        "docs/schema.md"
+      ],
+      "requires": [],
+      "acceptance": [
+        "新增 ensure_trusted(claude_json_path, project_path)：讀 claude.json，若 projects[<path>].hasTrustDialogAccepted 不為 true 則寫成 true 並回傳 True；已是 true 回傳 False 且檔案內容不變。path 的 key 格式與 Claude Code 既有寫法一致（正斜線、無尾斜線，例 C:/Users/user/OneDrive/Desktop/SideProject/lift-log）；projects 缺該 key 時新建條目。",
+        "寫入用 tempfile + os.replace 原子取代，保留其他 project 與頂層欄位一字不變（測試：先放含兩個 project 與頂層雜項欄位的 fixture，跑完 diff 只多一個 flag）。",
+        "只在 --watch 模式呼叫；headless -p 不碰 claude.json。claude.json 路徑預設 ~/.claude.json，可由 BRIEF_CLAUDE_JSON 覆寫（測試用）。",
+        "claude.json 不存在、非合法 JSON、或寫入失敗 → 印一行 warning 到 stderr 並照常派工（fail-open），不得讓整批派工中止。",
+        "派工 stdout 在有改寫時多印一行 `<project>: trusted <path>`，方便事後知道是這次派工幫它 trust 的。",
+        "回歸測試至少四條：未 trust→寫入、已 trust→不動、缺檔→warning 且派工繼續、其他 project 欄位保留。python -m unittest 全綠。"
+      ]
+    }
+  ]
 }

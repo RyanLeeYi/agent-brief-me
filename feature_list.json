@@ -4,28 +4,6 @@
   "archive": "docs/archive/features.jsonl",
   "features": [
     {
-      "id": "F12",
-      "title": "notify 放寬：report 與所有 question 都觸發，argv 帶 type 與 severity",
-      "status": "failing",
-      "signed_off": true,
-      "touches": [
-        "skills/brief-submit/SKILL.md",
-        "README.md",
-        "docs/schema.md",
-        "tests/test_brief_submit_notify.py"
-      ],
-      "requires": [
-        "F3"
-      ],
-      "acceptance": [
-        "brief-submit 成功 append 任一筆 question 或 report 後，若 config.json 的 notify 非 null，恰呼叫一次 notify，argv 為 `<notify...> <project> <type> <severity> <text>`：type 屬 {question,report}；severity 為記錄的 severity，缺省時 question 填 normal、report 填 none；text 為 question 的 title 或 report summary 的第一行。",
-        "notify 為 null 時不呼叫；notify 執行失敗不撤銷 append、回傳仍為成功並附 warning（維持 F3 既有語意）。",
-        "README 與 skills/brief-submit/SKILL.md 的 notify 契約段改成上述 argv（英文），移除『只有 high 觸發』的描述；~/.claude/scripts/brief-notify.py 為使用者側範例，不在本 repo 內、不列驗收。",
-        "tests/test_brief_submit_notify.py（stdlib only，`python tests/test_brief_submit_notify.py`）：以一支把 argv 寫進檔案的假 notify 腳本驗證——low question、high question、report 各呼叫一次且 argv 正確；notify 為 null 時檔案不存在；notify 指向不存在的程式時 append 仍成功。"
-      ],
-      "evidence": []
-    },
-    {
       "id": "F13",
       "title": "派工記錄、側欄 running 狀態與整批完成通知",
       "status": "failing",

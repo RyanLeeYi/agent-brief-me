@@ -6,7 +6,7 @@
     {
       "id": "F14",
       "title": "Sessions 頁：派出的 session 在做哪些任務、跑多久、結果",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "touches": [
         "scripts/dispatch.py",
@@ -26,6 +26,10 @@
         "Web UI 側欄：Dismissed 下方新增 `Sessions` 入口，右側顯示 `<N> running`（N=0 時不顯示數字）；專案列原本的 `running <elapsed>` 文字改為一顆綠點（不顯示時間）；All projects 列不變。",
         "Sessions 檢視分 Running／Finished 兩段。Running 每個 session 一張卡：專案名、pid、watch 或 log 標記、elapsed（沿用 elapsedString）、tasks 逐一顯示為晶片、current 一行（內容＋「<age> ago」，null 顯示 `no current_feature`）。Finished 每個 session 一列：專案名、tasks、exit code（非 0 用 danger 色）、duration、log 有路徑時顯示 `log` 文字（純顯示路徑即可，不必開檔）。段標題旁顯示 `older hidden: <finished_hidden>`（為 0 時不顯示）。沒有任何 session 時顯示 empty-state。Refresh 重抓。",
         "tests：test_dispatch_batch.py 驗證 started 記錄帶 tasks（含 consumed answer 時為其 title）；test_brief_me_api.py 用 fixture dispatches.jsonl（一筆 running、一筆 3 天前 finished、一筆 10 天前 finished）驗證 sessions.running／finished 各一筆、finished_hidden=1、舊記錄缺 tasks 不 500、current 在有無 `.harness/current_feature` 時的值；test_brief_me_html.py 加 scene：stub 回傳 sessions 時側欄出現 `Sessions` 與 `1 running`、專案列不含 `running ` 文字、Sessions 檢視出現 tasks 晶片與 `older hidden: 1`。"
+      ],
+      "evidence": [
+        "py -3.13 tests/test_dispatch_batch.py, test_brief_me_api.py (16), test_brief_me_html.py (11 scenes) OK (2026-08-22)",
+        "acceptance-verifier 5/5 pass at 43d01cc"
       ]
     }
   ]

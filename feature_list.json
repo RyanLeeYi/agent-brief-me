@@ -2,5 +2,27 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F11",
+      "title": "Web UI 報告改為手動標已讀",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "scripts/brief_me.html",
+        "tests/test_brief_me_html.py",
+        "docs/archive/features.jsonl"
+      ],
+      "requires": [
+        "F9"
+      ],
+      "acceptance": [
+        "取代 F9 第 6 條：點擊報告卡片只展開／收合全文，不 POST /api/read，綠點維持。",
+        "展開後的全文區有一顆 `Mark read` 按鈕；按下才 POST /api/read（該報告本次頁面只 POST 一次），成功後綠點消失、按鈕變為 disabled 的 `Read`；失敗時 toast 錯誤且綠點與按鈕維持原狀。",
+        "重新整理（Refresh 或重開頁面）後，未按 `Mark read` 的報告仍列在未讀區；按過的不再出現。",
+        "tests/test_brief_me_html.py 的 acceptance #9 場景改為：展開後 status 行數為 0 → 按 `Mark read` 後為 1 → 再展開收合不增加；執行方式與 F9 相同（`py -3.13 tests/test_brief_me_html.py`）。"
+      ],
+      "evidence": []
+    }
+  ]
 }

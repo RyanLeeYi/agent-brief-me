@@ -2,5 +2,28 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F17",
+      "title": "UI 的 watch 勾選框要能覆蓋 config 預設，不勾就不開視窗",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "scripts/dispatch.py",
+        "scripts/brief_me.py",
+        "tests/test_dispatch_trust.py",
+        "docs/schema.md"
+      ],
+      "requires": [
+        "F16"
+      ],
+      "acceptance": [
+        "dispatch.py 新增 --no-watch 旗標；解析規則：--watch → 開視窗；--no-watch → headless；兩者都沒給 → 沿用 config.json dispatch.watch。兩者同時給 → usage 錯誤 exit 2。",
+        "brief_me.py 的 _run_dispatch 依 POST body 的 dispatch.watch 擇一附加 --watch 或 --no-watch（body 有 watch 欄位時一律明確傳，不再依賴 config 預設）。",
+        "回歸測試：config watch=true 且 --no-watch → 走 headless（dispatches.jsonl 該筆 log 不為 null、claude.json 不被改寫）；config watch=false 且 --watch → 開視窗（log 為 null）；同時給兩旗標 → exit 2。",
+        "docs/schema.md 的 dispatch API 說明補一句：watch 欄位為明確覆蓋，config 的 dispatch.watch 只在 CLI 未指定時生效。",
+        "python -m unittest discover -s tests 除既有 playwright ImportError 外全綠。"
+      ]
+    }
+  ]
 }

@@ -2,5 +2,25 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F18",
+      "title": "brief-scan 不重複投遞已回答但尚未消化的 sign-off question",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "~/.claude/scripts/brief-scan.py",
+        "~/.claude/scripts/brief-scan-test.py",
+        "docs/schema.md"
+      ],
+      "requires": [],
+      "acceptance": [
+        "brief-scan 對每個 (project, title) 的去重改為：存在同標題的 question 且 (a) 無 status，或 (b) 最新 status 為 answered 且 answers.jsonl 折疊後該 question 的答案 consumed 不為 true → 視為已有，跳過不投。只有「從沒問過」「已 cancelled」「已回答且答案已被派工消化」三種情況才投新的。",
+        "去重結果在 stdout 摘要分開計數：`N filed, M pending, K answered-unconsumed`。",
+        "回歸測試 ~/.claude/scripts/brief-scan-test.py（stdlib unittest，暫存目錄當 BRIEF_HOME）：四條——無任何 question → 投；同標題 pending → 不投；同標題 answered 且 unconsumed → 不投；同標題 answered 且 consumed、feature 仍 failing 未簽核 → 投。",
+        "既有 --dry-run 行為不變。",
+        "docs/schema.md 的 collector 說明補一句去重規則。"
+      ]
+    }
+  ]
 }

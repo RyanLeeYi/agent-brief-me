@@ -317,31 +317,39 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(page.locator("#dismissed-view")).to_be_hidden()
     print("scene: sidebar project click returns from Dismissed view to inbox - OK")
 
-    # ---- acceptance #9: report expand -> read once, not on repeat expand ----
+    # ---- F11 (replaces F9 #9): expand does not mark read; Mark read button does, once ----
     r1_id = fx["r1"]["id"]
     r1_card = page.locator(f'.report-card[data-id="{r1_id}"]')
     r1_card.locator('[data-action="toggle-report"]').click()
     expect(r1_card.locator(".report-full")).to_be_visible()
     expect(r1_card.locator(".resume-cmd")).to_contain_text("claude --resume sess-report-1")
-    expect(r1_card.locator(".dot")).to_be_hidden()  # dot-hidden -> visibility:hidden
+    expect(r1_card.locator(".dot")).to_be_visible()  # expanding alone must not mark read
 
     def read_count():
         return len(statuses_for(brief_home, r1_id))
 
-    # the read status write is async (fetch -> stub file write); poll for it
+    time.sleep(0.3)
+    assert read_count() == 0, "expanding a report must not POST /api/read"
+    r1_card.locator('[data-action="mark-read"]').click()
     wait_for(lambda: read_count() == 1, message=f"expected 1 read status, got {statuses_for(brief_home, r1_id)}")
+    expect(r1_card.locator(".dot")).to_be_hidden()
+    expect(r1_card.locator('[data-action="mark-read"]')).to_be_disabled()
+    expect(r1_card.locator('[data-action="mark-read"]')).to_have_text("Read")
 
     r1_card.locator('[data-action="toggle-report"]').click()  # collapse
     r1_card.locator('[data-action="toggle-report"]').click()  # expand again
     expect(r1_card.locator(".report-full")).to_be_visible()
     time.sleep(0.3)  # give a wrongly-duplicated POST a chance to land before asserting
-    assert read_count() == 1, "expanding an already-read report must not POST /api/read again"
+    assert read_count() == 1, "re-expanding a read report must not POST /api/read again"
 
     r2_id = fx["r2"]["id"]
     r2_card = page.locator(f'.report-card[data-id="{r2_id}"]')
     r2_card.locator('[data-action="toggle-report"]').click()
     expect(r2_card.locator(".resume-cmd")).to_have_count(0)  # no session_id -> no resume command
-    print("scene: report expand marks read exactly once; resume command conditional on session_id - OK")
+    page.reload()
+    expect(page.locator(f'.report-card[data-id="{r1_id}"]')).to_have_count(0)  # marked -> gone
+    expect(page.locator(f'.report-card[data-id="{r2_id}"]')).to_have_count(1)  # expanded only -> still unread
+    print("scene: Mark read button marks once; expand-only survives reload; resume command conditional on session_id - OK")
 
 
 if __name__ == "__main__":

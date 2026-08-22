@@ -207,6 +207,7 @@
     padding:10px 16px; cursor:pointer; text-align:left;
   }
   .report-summary-first-line{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mark-read{ margin-top:8px; }
   .report-card .chevron{ transition:transform var(--transition); }
   .report-card.expanded .chevron{ transform:rotate(180deg); }
   .report-full{ padding:0 16px 16px; color:var(--text-secondary); white-space:pre-wrap; }
@@ -922,6 +923,7 @@
         '<div class="report-full" hidden>' +
           '<p>' + escapeHtml(report.summary) + '</p>' +
           resumeHtml +
+          '<button type="button" class="mark-read" data-action="mark-read"' + (isRead ? ' disabled>Read' : '>Mark read') + '</button>' +
         '</div>' +
       '</article>';
   }
@@ -930,20 +932,28 @@
     var toggleBtn = e.target.closest('[data-action="toggle-report"]');
     var copyBtn = e.target.closest('[data-action="copy-resume"]');
     if (copyBtn) { copyText('claude --resume ' + copyBtn.dataset.session, copyBtn); return; }
+    var readBtn = e.target.closest('[data-action="mark-read"]');
+    if (readBtn) {
+      var rcard = readBtn.closest('.report-card');
+      var rid = rcard.dataset.id;
+      if (state.reportsReadLocally[rid]) return;
+      readBtn.disabled = true;
+      apiPost('/api/read', { ids: [rid] }).then(function () {
+        state.reportsReadLocally[rid] = true;
+        readBtn.textContent = 'Read';
+        var dot = rcard.querySelector('.dot');
+        if (dot) dot.classList.add('dot-hidden');
+      }).catch(function (err) {
+        readBtn.disabled = false;
+        toast('Failed to mark report as read: ' + err.message, 'error');
+      });
+      return;
+    }
     if (!toggleBtn) return;
     var card = toggleBtn.closest('.report-card');
-    var id = card.dataset.id;
     var full = card.querySelector('.report-full');
     full.hidden = !full.hidden;
     card.classList.toggle('expanded', !full.hidden);
-    if (!full.hidden && !state.reportsReadLocally[id]) {
-      state.reportsReadLocally[id] = true;
-      var dot = card.querySelector('.dot');
-      if (dot) dot.classList.add('dot-hidden');
-      apiPost('/api/read', { ids: [id] }).catch(function (err) {
-        toast('Failed to mark report as read: ' + err.message, 'error');
-      });
-    }
   }
 
   function renderDismissedView() {

@@ -194,6 +194,15 @@ the file in order:
   transition; a `pending` question or an unconsumed `answer` stays that way
   until an explicit status/answer line changes it.
 
+## Collector idempotency
+
+A collector that files questions from a mutable source (e.g. a feature list)
+must not re-file a title while the previous copy is still in flight. The rule
+`brief-scan.py` uses, derived from the same folds: skip the title if any
+question with it is `pending`, or is `answered` and its folded answer has
+`consumed` not `true` (the user decided; dispatch.py has not acted yet). Only
+never-asked, `cancelled`, or answered-and-consumed titles get a fresh question.
+
 ## `dispatches.jsonl`
 
 Written only by `scripts/dispatch.py`; append-only like the other files.

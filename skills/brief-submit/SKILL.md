@@ -52,14 +52,22 @@ its trailing newline (the same cap `docs/schema.md` sets for every
 Same rejection rules as above, with `summary` in place of `title` (`report`
 has no `title`/`body`/`choices`/`recommendation` fields per `docs/schema.md`).
 
-## Notify on high-severity questions
+## Notify on every submission
 
 `~/.agent-brief/config.json`'s `notify` field is either `null` or an argv
-array (e.g. `["python3", "collector.py"]`). After a **question** record with
-`severity: "high"` is appended, this skill runs that array with `project`
-and `title` appended to its end, in that order, exactly once. `low` and
-`normal` severity questions, and every report regardless of severity, never
-run `notify`. If `notify` is `null`, nothing is run. A failure while running
+array (e.g. `["python3", "send-telegram.py"]`). After **any** record
+(question or report, any severity) is appended, this skill runs that array
+exactly once with four trailing arguments, in this order:
+
+| arg | value |
+|---|---|
+| `project` | the record's `project` |
+| `type` | `question` or `report` |
+| `severity` | the record's severity; `normal` for a question without one, `none` for a report without one |
+| `text` | the question's `title`, or the first line of the report's `summary` |
+
+The notifier decides what to do (e.g. only push `high` questions and
+reports). If `notify` is `null`, nothing is run. A failure while running
 `notify` does not undo the append and does not turn success into a rejection
 (the record is already durably written by that point); it is reported back
 as a warning alongside the `ok: true` result.
@@ -201,14 +209,13 @@ def _finish(record, base):
     inbox_path, config_path = _paths(base)
     atomic_append_line(inbox_path, record)
     result = {"ok": True, "id": record["id"]}
-    if record["type"] == "question" and record["severity"] == "high":
-        warning = _run_notify(config_path, record["project"], record["title"])
-        if warning:
-            result["warning"] = warning
+    warning = _run_notify(config_path, record)
+    if warning:
+        result["warning"] = warning
     return result
 
 
-def _run_notify(config_path, project, title):
+def _run_notify(config_path, record):
     if not os.path.exists(config_path):
         return None
     with open(config_path, "r", encoding="utf-8") as f:
@@ -216,8 +223,11 @@ def _run_notify(config_path, project, title):
     notify = config.get("notify")
     if notify is None:
         return None
+    is_q = record["type"] == "question"
+    severity = record.get("severity") or ("normal" if is_q else "none")
+    text = record["title"] if is_q else record["summary"].splitlines()[0]
     try:
-        subprocess.run(list(notify) + [project, title], check=False)
+        subprocess.run(list(notify) + [record["project"], record["type"], severity, text], check=False)
     except OSError as exc:
         return f"notify failed to run: {exc}"
     return None

@@ -24,7 +24,7 @@ Working agents that hit a decision only you can make, or that finish a piece of 
 - **Watch mode** - `/brief-me --watch` opens workers as visible interactive windows instead. The first time a project is opened this way Claude Code shows its one-time workspace trust dialog; accept it once per project.
 - **Web UI** - `brief_me.py serve` gives the same inbox as a local page: zero tokens, click to answer, dismiss and restore questions, dispatch from the browser.
 - **Resumable workers** - every record carries the worker's `session_id`; `claude --resume <id>` reopens that session to ask follow-ups.
-- **Pluggable collector and notifier** - file questions from any source (feature lists, to-do files, webhooks) and get pinged on high-severity ones.
+- **Pluggable collector and notifier** - file questions from any source (feature lists, to-do files, webhooks) and get pinged on whatever your notifier script decides matters.
 - **No database, no dependencies** - two append-only JSONL files and the Python standard library. State is derived by folding the files, so an interrupted run never loses anything.
 
 ## Install
@@ -180,13 +180,13 @@ A complete, real collector is in [`examples/feature-list-collector.py`](examples
 
 ### Notifier
 
-`config.json`'s `notify` is also an argv array (or `null`). Submitting a **high**-severity question runs it once with the question's `project` and `title` appended as two trailing arguments; `low` and `normal` never trigger it.
+`config.json`'s `notify` is also an argv array (or `null`). Every submission (question or report, any severity) runs it once with four trailing arguments: `<project> <type> <severity> <text>` - `type` is `question` or `report`, `severity` is the record's severity (`normal` for a question without one, `none` for a report without one), `text` is the question title or the first line of the report summary. Your script decides what is worth a ping.
 
 ```json
 {"projects": [], "collector": null, "notify": ["python3", "/path/to/send-telegram.py"]}
 ```
 
-Your script receives e.g. `send-telegram.py my-project "prod deploy blocked: pick a rollback strategy"`.
+Your script receives e.g. `send-telegram.py my-project question high "prod deploy blocked: pick a rollback strategy"` or `send-telegram.py my-project report none "F12 passing; no blockers; session-handoff.md"`.
 
 ### Teaching other sessions to use the inbox
 

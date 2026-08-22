@@ -31,8 +31,12 @@ from typing import Any
 MAX_LINE_BYTES = 8 * 1024
 
 DELEGATION_SENTENCE = (
-    "You are authorized to dispatch subagents to help complete this work, "
-    "following the user's existing subagent-delegation rules."
+    "Before implementing, invoke Skill(skill=\"baton-dispatch\") and answer its five "
+    "dispatch-brake questions (Outcome, Direct-work, Independence, Ownership, Closure) "
+    "in your reply; group the features by shared files per its step 2 - one feature is "
+    "not automatically one worker. Dispatch `executor` (isolation=\"worktree\") only "
+    "for groups that pass all five; do the rest yourself. Record the per-feature "
+    "verdict (dispatched / direct, and why) in your final brief-submit report."
 )
 
 NO_DELEGATION_SENTENCE = (

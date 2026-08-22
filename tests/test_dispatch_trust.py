@@ -137,5 +137,48 @@ class EnsureTrustedTests(unittest.TestCase):
         self.assertIn("warning", out.stderr.lower(), out.stdout + out.stderr)
 
 
+class WatchOverrideTests(unittest.TestCase):
+    """F17: CLI --watch / --no-watch overrides config dispatch.watch."""
+
+    def _run(self, config_watch, flags):
+        home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        project_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, project_dir, ignore_errors=True)
+        _write_json(os.path.join(home, "config.json"),
+                    {"projects": [{"name": "a", "path": project_dir}], "collector": None, "notify": None,
+                     "dispatch": {"watch": config_watch}})
+        claude_json = os.path.join(home, "claude.json")
+        _write_json(claude_json, {"projects": {}})
+        env = {**os.environ, "BRIEF_HOME": home, "BRIEF_CLAUDE_CMD": _make_immediate_exit_claude(home),
+               "BRIEF_CLAUDE_JSON": claude_json}
+        out = subprocess.run([sys.executable, DISPATCH, *flags, "a"],
+                             env=env, capture_output=True, text=True, timeout=30)
+        dispatches = os.path.join(home, "dispatches.jsonl")
+        started = []
+        if os.path.exists(dispatches):
+            with open(dispatches, encoding="utf-8") as f:
+                started = [r for r in map(json.loads, f) if r.get("type") == "started"]
+        with open(claude_json, encoding="utf-8") as f:
+            trusted = json.load(f)["projects"]
+        return out, started, trusted
+
+    def test_no_watch_flag_overrides_config_true(self):
+        out, started, trusted = self._run(True, ["--no-watch"])
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIsNotNone(started[0]["log"])
+        self.assertEqual(trusted, {})
+
+    def test_watch_flag_overrides_config_false(self):
+        out, started, trusted = self._run(False, ["--watch"])
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIsNone(started[0]["log"])
+
+    def test_both_flags_is_usage_error(self):
+        out, started, _ = self._run(True, ["--watch", "--no-watch"])
+        self.assertEqual(out.returncode, 2)
+        self.assertEqual(started, [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

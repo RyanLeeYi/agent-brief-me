@@ -197,6 +197,9 @@ the file in order:
 ## `dispatches.jsonl`
 
 Written only by `scripts/dispatch.py`; append-only like the other files.
+`--watch` / `--no-watch` on the CLI are explicit overrides; the config
+`dispatch.watch` default applies only when neither is given. The Web UI always
+passes one of them, so its checkbox state is what you get (F17).
 `--watch` dispatches also pre-accept the one-time workspace trust dialog by
 flipping `hasTrustDialogAccepted` to `true` for the project in claude.json
 (default `~/.claude.json`, overridable via `BRIEF_CLAUDE_JSON` for testing);

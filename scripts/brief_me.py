@@ -578,8 +578,7 @@ def _run_dispatch(brief_home, projects, watch):
     a non-zero dispatch.py exit - that becomes dispatch_error, not an
     exception, per the contract."""
     cmd = [sys.executable, os.path.join(SCRIPT_DIR, "dispatch.py")]
-    if watch:
-        cmd.append("--watch")
+    cmd.append("--watch" if watch else "--no-watch")  # explicit: UI value overrides config default
     cmd.extend(projects)
     result = subprocess.run(cmd, capture_output=True, text=True)
 

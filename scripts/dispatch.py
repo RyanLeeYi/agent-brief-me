@@ -407,11 +407,11 @@ def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
 def main(argv: list[str]) -> int:
     if argv[:1] == ["--wait"]:
         return wait_batch(get_brief_home(), argv[1], [int(p) for p in argv[2:]])
-    watch_flag = "--watch" in argv
-    argv = [a for a in argv if a != "--watch"]
-    if not argv:
-        print("usage: dispatch.py [--watch] <project> [<project> ...]", file=sys.stderr)
-        return 1
+    watch_flag, no_watch_flag = "--watch" in argv, "--no-watch" in argv
+    argv = [a for a in argv if a not in ("--watch", "--no-watch")]
+    if not argv or (watch_flag and no_watch_flag):
+        print("usage: dispatch.py [--watch | --no-watch] <project> [<project> ...]", file=sys.stderr)
+        return 2 if (watch_flag and no_watch_flag) else 1
 
     brief_home = get_brief_home()
     claude_cmd = os.environ.get("BRIEF_CLAUDE_CMD", "claude")
@@ -420,7 +420,8 @@ def main(argv: list[str]) -> int:
     config = load_config(brief_home)
     projects_by_name = {p["name"]: p["path"] for p in config.get("projects", [])}
     settings = dispatch_settings(config)
-    watch = watch_flag or bool(settings["watch"])
+    # CLI flag is an explicit override; config dispatch.watch only applies when neither is given.
+    watch = watch_flag if (watch_flag or no_watch_flag) else bool(settings["watch"])
     args = claude_args(settings, brief_home)
 
     question_project = fold_question_projects(os.path.join(brief_home, "inbox.jsonl"))

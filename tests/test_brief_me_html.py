@@ -335,6 +335,7 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(r1_card.locator(".dot")).to_be_hidden()
     expect(r1_card.locator('[data-action="mark-read"]')).to_be_disabled()
     expect(r1_card.locator('[data-action="mark-read"]')).to_have_text("Read")
+    expect(page.locator("#header-counts")).to_contain_text("1 unread reports")  # counts update without refresh
 
     r1_card.locator('[data-action="toggle-report"]').click()  # collapse
     r1_card.locator('[data-action="toggle-report"]').click()  # expand again

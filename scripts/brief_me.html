@@ -494,6 +494,7 @@
     var reports = project === '__all__'
       ? Object.keys(ur).reduce(function (acc, p) { return acc.concat(ur[p]); }, [])
       : (ur[project] || []);
+    reports = reports.filter(function (r) { return !state.reportsReadLocally[r.id]; });
     var hasHigh = questions.some(function (q) { return q.severity === 'high'; });
     var dot = hasHigh ? 'red' : ((questions.length + reports.length) > 0 ? 'green' : 'gray');
     return { unread: reports.length, pending: questions.length, dot: dot };
@@ -943,6 +944,7 @@
         readBtn.textContent = 'Read';
         var dot = rcard.querySelector('.dot');
         if (dot) dot.classList.add('dot-hidden');
+        renderSidebar(); updateHeader();
       }).catch(function (err) {
         readBtn.disabled = false;
         toast('Failed to mark report as read: ' + err.message, 'error');

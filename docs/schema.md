@@ -219,6 +219,14 @@ included; `finished_hidden` is the session count older than the 7-day
 `finished` window) - see F14's acceptance in `feature_list.json`/
 `docs/archive/features.jsonl` for the exact per-session shape.
 
+A running session ends in one of two ways (`ended_by` on each `finished`
+element): `exit` - the batch waiter wrote a `finished` line; or `report` - a
+report for the same project was filed to `inbox.jsonl` with `created_at` at
+or after the session's `started_at` (F15). The report rule exists because a
+`--watch` claude window stays alive at its prompt after the work is done, so
+pid liveness alone would show it running forever. A report-ended session has
+`finished_at` = the earliest such report's `created_at` and `exit_code: null`.
+
 ## Atomic append rule
 
 - One record is exactly one line: a single JSON object, UTF-8 encoded, with

@@ -394,6 +394,24 @@ def run_scenes(page, base_url, brief_home, fx):
     os.remove(os.path.join(brief_home, "sessions.json"))
     print("scene: Sessions sidebar entry + Sessions view (tasks chips, older hidden) - OK")
 
+    # ---- F15: finished row ended by report shows REPORT badge, no exit code ----
+    with open(os.path.join(brief_home, "sessions.json"), "w", encoding="utf-8") as f:
+        json.dump({"running": [], "finished_hidden": 0, "finished": [
+            {"batch_id": "b1", "project": proj, "pid": 1, "started_at": "2026-08-22T01:00:00Z",
+             "finished_at": "2026-08-22T01:10:00Z", "duration_seconds": 600,
+             "exit_code": None, "ended_by": "report", "tasks": [], "log": None},
+            {"batch_id": "b2", "project": proj, "pid": 2, "started_at": "2026-08-22T02:00:00Z",
+             "finished_at": "2026-08-22T02:10:00Z", "duration_seconds": 600,
+             "exit_code": 0, "ended_by": "exit", "tasks": [], "log": None}]}, f)
+    page.locator("#refresh-btn").click()
+    rows = page.locator("#sessions-finished-list .session-row")
+    expect(rows).to_have_count(2)
+    expect(rows.nth(0)).to_contain_text("REPORT")
+    expect(rows.nth(0)).not_to_contain_text("exit")
+    expect(rows.nth(1)).to_contain_text("exit 0")
+    os.remove(os.path.join(brief_home, "sessions.json"))
+    print("scene: Finished row ended_by=report shows REPORT badge - OK")
+
 
 if __name__ == "__main__":
     main()

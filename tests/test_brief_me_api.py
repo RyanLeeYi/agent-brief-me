@@ -443,6 +443,46 @@ class BriefMeAPITestCase(unittest.TestCase):
         finally:
             shutil.rmtree(project_dir, ignore_errors=True)
 
+    def test_state_sessions_ended_by_report(self):
+        """F15: a live pid is ended by a report filed at/after started_at;
+        a report filed before started_at does not count."""
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+
+        def ts(dt):
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        now = datetime.now(timezone.utc)
+        started_at = now - timedelta(minutes=10)
+        batch = str(uuid.uuid4())
+        with open(os.path.join(self.home, "dispatches.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "started", "batch_id": batch, "project": "demo",
+                                "pid": os.getpid(), "started_at": ts(started_at),
+                                "log": None, "tasks": []}) + "\n")
+
+        def report(created):
+            return json.dumps({"type": "report", "id": str(uuid.uuid4()), "project": "demo",
+                               "summary": "x", "severity": "normal", "created_at": ts(created)})
+
+        # report older than started_at -> still running
+        with open(self._inbox_path(), "w", encoding="utf-8") as f:
+            f.write(report(started_at - timedelta(minutes=1)) + "\n")
+        _, data = self._get("/api/state")
+        self.assertEqual(len(data["sessions"]["running"]), 1)
+        self.assertIn("demo", data["running"])
+
+        # report at/after started_at -> finished, ended_by report
+        with open(self._inbox_path(), "a", encoding="utf-8") as f:
+            f.write(report(started_at + timedelta(minutes=3)) + "\n")
+        _, data = self._get("/api/state")
+        sessions = data["sessions"]
+        self.assertEqual(sessions["running"], [])
+        self.assertNotIn("demo", data["running"])
+        fin = sessions["finished"][0]
+        self.assertEqual(fin["ended_by"], "report")
+        self.assertIsNone(fin["exit_code"])
+        self.assertEqual(fin["finished_at"], ts(started_at + timedelta(minutes=3)))
+        self.assertEqual(fin["duration_seconds"], 180)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

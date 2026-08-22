@@ -1123,7 +1123,9 @@
   }
 
   function sessionFinishedRowHTML(s) {
-    var exitHtml = '<span' + (s.exit_code !== 0 ? ' class="text-danger"' : '') + '>exit ' + escapeHtml(s.exit_code) + '</span>';
+    var exitHtml = s.ended_by === 'report'
+      ? '<span class="badge">REPORT</span>'
+      : '<span' + (s.exit_code !== 0 ? ' class="text-danger"' : '') + '>exit ' + escapeHtml(s.exit_code) + '</span>';
     var logHtml = s.log ? '<span class="mono">log: ' + escapeHtml(s.log) + '</span>' : '';
     return '' +
       '<div class="session-row" data-batch-id="' + escapeHtml(s.batch_id) + '">' +

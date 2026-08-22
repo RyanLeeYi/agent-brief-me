@@ -178,6 +178,29 @@ def _parse_utc(ts):
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
+def _report_times(inbox_path):
+    """{project: [created_at datetime, ...]} for every report in the inbox (F15).
+    A session counts as ended once a report for its project is filed at or
+    after its started_at - a watch-mode claude window stays alive at the
+    prompt after the work is done, so pid liveness alone never ends it."""
+    out = {}
+    for line in iter_lines(inbox_path):
+        try:
+            rec = json.loads(line)
+            if rec.get("type") != "report":
+                continue
+            out.setdefault(rec.get("project"), []).append(_parse_utc(rec["created_at"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def _report_ended_at(reports, project, started_at):
+    """Earliest report for `project` at/after `started_at`, or None."""
+    later = [t for t in reports.get(project, []) if t >= started_at]
+    return min(later) if later else None
+
+
 def build_status(ref, status):
     """Build a {"type": "status", ...} line for any of the four status
     values (answered/cancelled/read/reopened); `at` is now()."""
@@ -374,9 +397,10 @@ def _api_state(brief_home):
             unconsumed_counts[proj] = unconsumed_counts.get(proj, 0) + 1
     payload["unconsumed_counts"] = unconsumed_counts
     dispatches_path = os.path.join(brief_home, "dispatches.jsonl")
-    payload["running"] = running_sessions(dispatches_path)
+    reports = _report_times(os.path.join(brief_home, "inbox.jsonl"))
+    payload["running"] = running_sessions(dispatches_path, reports)
     projects_by_path = {p["name"]: p["path"] for p in config.get("projects", [])}
-    payload["sessions"] = sessions_view(dispatches_path, projects_by_path)
+    payload["sessions"] = sessions_view(dispatches_path, projects_by_path, reports)
 
     return payload
 
@@ -403,9 +427,11 @@ def _pid_alive(pid):
         return True
 
 
-def running_sessions(path):
+def running_sessions(path, reports=None):
     """{project: {started_at, elapsed_seconds}} for started sessions whose
-    batch has no finished line and whose pid is still alive."""
+    batch has no finished line, whose pid is still alive, and (F15) for
+    which no report has been filed since started_at."""
+    reports = reports or {}
     if not os.path.exists(path):
         return {}
     started, finished = [], set()
@@ -430,6 +456,8 @@ def running_sessions(path):
         try:
             t0 = datetime.strptime(rec["started_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         except (KeyError, ValueError):
+            continue
+        if _report_ended_at(reports, rec.get("project"), t0) is not None:
             continue
         out[rec["project"]] = {"started_at": rec["started_at"],
                                "elapsed_seconds": int((now - t0).total_seconds())}
@@ -476,13 +504,14 @@ def _load_batches(path):
     return batches
 
 
-def sessions_view(path, projects_by_path):
+def sessions_view(path, projects_by_path, reports=None):
     """GET /api/state's `sessions` field (F14): {running: [...], finished:
     [...], finished_hidden: N} (N = batches whose finished_at is older than
     SESSION_WINDOW_SECONDS). `running` uses the same alive-batch condition as
     running_sessions(); `finished` is sorted newest-first. A `started` record
     with no `tasks` key (written before this field existed) folds to []."""
     now = datetime.now(timezone.utc)
+    reports = reports or {}
     running, finished, hidden = [], [], 0
     for batch_id, batch in _load_batches(path).items():
         fin = batch["finished"]
@@ -494,6 +523,20 @@ def sessions_view(path, projects_by_path):
                 except (KeyError, ValueError):
                     continue
                 if not _pid_alive(pid):
+                    continue
+                ended = _report_ended_at(reports, rec.get("project"), t0)
+                if ended is not None:
+                    if (now - ended).total_seconds() > SESSION_WINDOW_SECONDS:
+                        hidden += 1
+                        continue
+                    finished.append({
+                        "batch_id": batch_id, "project": rec.get("project"), "pid": pid,
+                        "started_at": rec["started_at"],
+                        "finished_at": ended.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "duration_seconds": int((ended - t0).total_seconds()),
+                        "exit_code": None, "ended_by": "report",
+                        "tasks": rec.get("tasks", []), "log": rec.get("log"),
+                    })
                     continue
                 running.append({
                     "batch_id": batch_id, "project": rec.get("project"), "pid": pid,
@@ -523,6 +566,7 @@ def sessions_view(path, projects_by_path):
                 "started_at": rec.get("started_at"), "finished_at": fin["finished_at"],
                 "duration_seconds": duration,
                 "exit_code": exit_codes[i] if i < len(exit_codes) else None,
+                "ended_by": "exit",
                 "tasks": rec.get("tasks", []), "log": rec.get("log"),
             })
     finished.sort(key=lambda s: s["finished_at"], reverse=True)

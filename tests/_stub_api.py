@@ -157,7 +157,19 @@ def build_state(brief_home):
         "projects": _config_projects(brief_home),
         "unconsumed_counts": unconsumed_counts,
         "dismissed": dismissed_grouped,
+        "running": _running(brief_home),
     }, questions, reports
+
+
+def _running(brief_home):
+    """F13 test seam: {project: {started_at, elapsed_seconds}} read verbatim
+    from BRIEF_HOME/running.json when present (the real server derives it
+    from dispatches.jsonl + live pids, which a UI test cannot stage)."""
+    path = os.path.join(brief_home, "running.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 class Handler(BaseHTTPRequestHandler):

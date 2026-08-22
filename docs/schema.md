@@ -194,6 +194,21 @@ the file in order:
   transition; a `pending` question or an unconsumed `answer` stays that way
   until an explicit status/answer line changes it.
 
+## `dispatches.jsonl`
+
+Written only by `scripts/dispatch.py`; append-only like the other files.
+Two shapes, discriminated by `type`:
+
+```json
+{"type": "started", "batch_id": "<uuid4 shared by one dispatch.py run>", "project": "my-project", "pid": 12345, "started_at": "2026-08-22T01:02:03Z", "log": "/path/to/logs/my-project-<hex>.log"}
+{"type": "finished", "batch_id": "<same uuid4>", "finished_at": "2026-08-22T01:20:00Z", "exit_codes": [0, 0]}
+```
+
+`log` is `null` for `--watch` windows. A project is *running* when it has a
+`started` line whose batch has no `finished` line and whose `pid` is still
+alive (unknown counts as alive); `GET /api/state` exposes that as
+`running: {project: {started_at, elapsed_seconds}}`.
+
 ## Atomic append rule
 
 - One record is exactly one line: a single JSON object, UTF-8 encoded, with

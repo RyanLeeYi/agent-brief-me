@@ -352,6 +352,18 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(page.locator(f'.report-card[data-id="{r2_id}"]')).to_have_count(1)  # expanded only -> still unread
     print("scene: Mark read button marks once; expand-only survives reload; resume command conditional on session_id - OK")
 
+    # ---- F13: sidebar shows running <elapsed> for a dispatched project ----
+    proj = fx["r2"]["project"]
+    with open(os.path.join(brief_home, "running.json"), "w", encoding="utf-8") as f:
+        json.dump({proj: {"started_at": "2026-08-22T00:00:00Z", "elapsed_seconds": 754}}, f)
+    page.locator("#refresh-btn").click()
+    expect(page.locator(f'.side-item[data-project="{proj}"] .side-item-running')).to_have_text("running 12m")
+    expect(page.locator('.side-item[data-project="__all__"] .side-item-running')).to_have_count(0)
+    os.remove(os.path.join(brief_home, "running.json"))
+    page.locator("#refresh-btn").click()
+    expect(page.locator(f'.side-item[data-project="{proj}"] .side-item-running')).to_have_count(0)
+    print("scene: sidebar running indicator appears and clears - OK")
+
 
 if __name__ == "__main__":
     main()

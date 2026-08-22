@@ -9,7 +9,9 @@ delegation-authorization sentence and a brief-submit instruction. On
 successful spawn, the answers used are marked consumed by appending updated
 answer lines (see docs/schema.md). Unrecognized project names are reported
 and skipped without aborting the rest of the batch. The script never waits
-for a dispatched session to finish.
+for a dispatched session to finish: every spawn is recorded in
+dispatches.jsonl and a detached waiter (`--wait`) records the batch's end
+and runs config.json's `notify` once.
 
 Stdlib only. Two knobs exist purely for testing without a real `claude`
 binary or a real ~/.agent-brief:
@@ -21,7 +23,9 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 MAX_LINE_BYTES = 8 * 1024
@@ -259,7 +263,85 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subp
                             creationflags=flags, env=clean_env())
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def dispatches_path(brief_home: str) -> str:
+    return os.path.join(brief_home, "dispatches.jsonl")
+
+
+def pid_exit_code(pid: int):
+    """None while the process is alive; its exit code once gone. The sessions
+    are not our children once the waiter is detached, so no waitpid.
+    ponytail: POSIX branch reports 0 for any finished pid - os.kill can
+    tell alive/dead but not the code; use Windows branch for real codes."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return 0
+        code = wintypes.DWORD()
+        ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
+        k32.CloseHandle(handle)
+        if not ok or code.value == 259:  # STILL_ACTIVE
+            return None
+        return int(code.value)
+    try:
+        os.kill(pid, 0)
+        return None
+    except ProcessLookupError:
+        return 0
+    except PermissionError:
+        return None
+
+
+def spawn_waiter(brief_home: str, batch_id: str, pids: list[int]) -> None:
+    """Detached `dispatch.py --wait` so the caller returns immediately."""
+    cmd = [sys.executable, os.path.abspath(__file__), "--wait", batch_id, *map(str, pids)]
+    kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                              "stderr": subprocess.DEVNULL, "cwd": brief_home}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(cmd, **kwargs)
+
+
+def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
+    codes: dict[int, int] = {}
+    while len(codes) < len(pids):
+        for pid in pids:
+            if pid not in codes:
+                code = pid_exit_code(pid)
+                if code is not None:
+                    codes[pid] = code
+        if len(codes) < len(pids):
+            time.sleep(2)
+    atomic_append_line(dispatches_path(brief_home), {
+        "type": "finished", "batch_id": batch_id, "finished_at": _now(),
+        "exit_codes": [codes[p] for p in pids],
+    })
+    projects = []
+    for line in open(dispatches_path(brief_home), encoding="utf-8"):
+        rec = json.loads(line)
+        if rec.get("type") == "started" and rec.get("batch_id") == batch_id:
+            projects.append(rec["project"])
+    notify = load_config(brief_home).get("notify")
+    if notify:
+        try:
+            subprocess.run(list(notify) + [",".join(projects), "batch", "none",
+                                           f"{len(pids)}/{len(pids)} sessions finished"], check=False)
+        except OSError:
+            pass
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["--wait"]:
+        return wait_batch(get_brief_home(), argv[1], [int(p) for p in argv[2:]])
     watch_flag = "--watch" in argv
     argv = [a for a in argv if a != "--watch"]
     if not argv:
@@ -280,6 +362,8 @@ def main(argv: list[str]) -> int:
     answers_by_question = fold_answers(answers_path)
 
     exit_code = 0
+    batch_id = str(uuid.uuid4())
+    pids: list[int] = []
     for name in argv:
         path = projects_by_name.get(name)
         if path is None:
@@ -293,21 +377,28 @@ def main(argv: list[str]) -> int:
 
         try:
             if watch:
-                spawn_watch(claude_cmd, path, prompt, args)
+                proc = spawn_watch(claude_cmd, path, prompt, args)
             else:
-                spawn(claude_cmd, path, prompt, log_path, args)
+                proc = spawn(claude_cmd, path, prompt, log_path, args)
         except OSError as exc:
             print(f"{name}: spawn failed: {exc}")
             exit_code = 1
             continue
 
         print(f"{name}: opened in new window" if watch else f"{name}: dispatched, log={log_path}")
+        pids.append(proc.pid)
+        atomic_append_line(dispatches_path(brief_home), {
+            "type": "started", "batch_id": batch_id, "project": name, "pid": proc.pid,
+            "started_at": _now(), "log": None if watch else log_path,
+        })
 
         for entry in unconsumed:
             updated = dict(entry["record"])
             updated["consumed"] = True
             atomic_append_line(answers_path, updated)
 
+    if pids:
+        spawn_waiter(brief_home, batch_id, pids)
     return exit_code
 
 

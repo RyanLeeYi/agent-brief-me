@@ -369,8 +369,64 @@ def _api_state(brief_home):
             proj = questions[qid]["project"]
             unconsumed_counts[proj] = unconsumed_counts.get(proj, 0) + 1
     payload["unconsumed_counts"] = unconsumed_counts
+    payload["running"] = running_sessions(os.path.join(brief_home, "dispatches.jsonl"))
 
     return payload
+
+
+def _pid_alive(pid):
+    """False only when we can prove the pid is gone; unknown counts as alive."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x1000, False, pid)
+            if not h:
+                return False
+            code = wintypes.DWORD()
+            ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+            k32.CloseHandle(h)
+            return (not ok) or code.value == 259
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return True
+
+
+def running_sessions(path):
+    """{project: {started_at, elapsed_seconds}} for started sessions whose
+    batch has no finished line and whose pid is still alive."""
+    if not os.path.exists(path):
+        return {}
+    started, finished = [], set()
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("type") == "started":
+                started.append(rec)
+            elif rec.get("type") == "finished":
+                finished.add(rec.get("batch_id"))
+    now = datetime.now(timezone.utc)
+    out = {}
+    for rec in started:
+        if rec.get("batch_id") in finished or not _pid_alive(int(rec.get("pid", 0))):
+            continue
+        try:
+            t0 = datetime.strptime(rec["started_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except (KeyError, ValueError):
+            continue
+        out[rec["project"]] = {"started_at": rec["started_at"],
+                               "elapsed_seconds": int((now - t0).total_seconds())}
+    return out
 
 
 def _run_dispatch(brief_home, projects, watch):

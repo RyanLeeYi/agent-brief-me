@@ -159,6 +159,7 @@
   .badge-high{ background:var(--danger); color:#fff; }
   .badge-multi{ background:var(--accent-bg); color:var(--accent); text-transform:none; margin-left:6px; }
   .card-project{ color:var(--text-muted); font-size:12px; }
+  .side-item-running{ color:var(--text-muted); font-size:11px; margin-left:6px; }
   .card-age{ color:var(--text-muted); font-size:12px; margin-left:auto; }
   .card-title{ margin:0 0 6px; font-size:15px; }
   .card-body-text{ margin:0 0 12px; color:var(--text-secondary); white-space:pre-wrap; }
@@ -389,7 +390,7 @@
   function emptyState() {
     return {
       collector_warning: null, unread_reports: {}, pending_questions: {},
-      unconsumed_projects: [], projects: [], unconsumed_counts: {}, dismissed: {}
+      unconsumed_projects: [], projects: [], unconsumed_counts: {}, dismissed: {}, running: {}
     };
   }
 
@@ -713,6 +714,14 @@
     headerCountsEl.textContent = stats.pending + ' questions · ' + stats.unread + ' unread reports';
   }
 
+  function elapsedString(sec) {
+    sec = Number(sec) || 0;
+    if (sec < 60) return sec + 's';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm';
+    if (sec < 86400) return Math.floor(sec / 3600) + 'h';
+    return Math.floor(sec / 86400) + 'd';
+  }
+
   function renderSidebar() {
     var items = ['__all__'].concat(state.data.projects);
     projectListEl.innerHTML = items.map(function (p) {
@@ -722,6 +731,8 @@
       return '<button type="button" class="side-item' + (active ? ' active' : '') + '" data-project="' + escapeHtml(p) + '">' +
         '<span class="dot dot-' + stats.dot + '"></span>' +
         '<span class="side-item-name">' + escapeHtml(label) + '</span>' +
+        (p !== '__all__' && state.data.running && state.data.running[p]
+          ? '<span class="side-item-running">running ' + escapeHtml(elapsedString(state.data.running[p].elapsed_seconds)) + '</span>' : '') +
         '<span class="side-item-stats">' + stats.unread + ' · ' + stats.pending + '</span>' +
         '</button>';
     }).join('');

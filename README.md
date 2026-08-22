@@ -80,6 +80,7 @@ flowchart LR
 | `inbox.jsonl` | collector, workers (`brief-submit`), `brief-me` (status lines) | questions, reports, and their `read` / `answered` / `cancelled` markers |
 | `answers.jsonl` | `brief-me`, `dispatch.py` | your answers, each later re-appended with `consumed: true` once a worker received it |
 | `logs/` | `dispatch.py` | stdout of each headless worker |
+| `dispatches.jsonl` | `dispatch.py` | one `started` line per spawned worker (project, pid, started_at, log) and one `finished` line per batch; drives the sidebar's `running <elapsed>` marker |
 
 Nothing is ever rewritten in place. Current state is always re-derived by folding the files (see [`docs/schema.md`](docs/schema.md)).
 
@@ -187,6 +188,8 @@ A complete, real collector is in [`examples/feature-list-collector.py`](examples
 ```
 
 Your script receives e.g. `send-telegram.py my-project question high "prod deploy blocked: pick a rollback strategy"` or `send-telegram.py my-project report none "F12 passing; no blockers; session-handoff.md"`.
+
+`dispatch.py` also runs it once when every worker of a batch has exited, with `type` = `batch`: `send-telegram.py my-project,other-project batch none "2/2 sessions finished"`. A detached waiter process does the waiting, so the dispatch call itself still returns immediately.
 
 ### Teaching other sessions to use the inbox
 

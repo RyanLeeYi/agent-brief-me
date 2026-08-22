@@ -158,6 +158,7 @@ def build_state(brief_home):
         "unconsumed_counts": unconsumed_counts,
         "dismissed": dismissed_grouped,
         "running": _running(brief_home),
+        "sessions": _sessions(brief_home),
     }, questions, reports
 
 
@@ -168,6 +169,17 @@ def _running(brief_home):
     path = os.path.join(brief_home, "running.json")
     if not os.path.exists(path):
         return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _sessions(brief_home):
+    """F14 test seam: {running, finished, finished_hidden} read verbatim
+    from BRIEF_HOME/sessions.json when present (the real server derives it
+    from dispatch tracking + live pids, which a UI test cannot stage)."""
+    path = os.path.join(brief_home, "sessions.json")
+    if not os.path.exists(path):
+        return {"running": [], "finished": [], "finished_hidden": 0}
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 

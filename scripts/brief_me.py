@@ -174,6 +174,10 @@ def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _parse_utc(ts):
+    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
 def build_status(ref, status):
     """Build a {"type": "status", ...} line for any of the four status
     values (answered/cancelled/read/reopened); `at` is now()."""
@@ -369,7 +373,10 @@ def _api_state(brief_home):
             proj = questions[qid]["project"]
             unconsumed_counts[proj] = unconsumed_counts.get(proj, 0) + 1
     payload["unconsumed_counts"] = unconsumed_counts
-    payload["running"] = running_sessions(os.path.join(brief_home, "dispatches.jsonl"))
+    dispatches_path = os.path.join(brief_home, "dispatches.jsonl")
+    payload["running"] = running_sessions(dispatches_path)
+    projects_by_path = {p["name"]: p["path"] for p in config.get("projects", [])}
+    payload["sessions"] = sessions_view(dispatches_path, projects_by_path)
 
     return payload
 
@@ -427,6 +434,99 @@ def running_sessions(path):
         out[rec["project"]] = {"started_at": rec["started_at"],
                                "elapsed_seconds": int((now - t0).total_seconds())}
     return out
+
+
+SESSION_WINDOW_SECONDS = 7 * 24 * 3600  # F14: hide `finished` sessions older than this
+
+
+def _project_current(path):
+    """`current` for a running session (F14): {"feature": <content>, "mtime":
+    <ISO UTC>} from <path>/.harness/current_feature, or None if the project
+    path is unknown or the file doesn't exist."""
+    if not path:
+        return None
+    cf_path = os.path.join(path, ".harness", "current_feature")
+    try:
+        with open(cf_path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        mtime = datetime.fromtimestamp(os.path.getmtime(cf_path), tz=timezone.utc)
+    except OSError:
+        return None
+    return {"feature": content, "mtime": mtime.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+def _load_batches(path):
+    """Parse dispatches.jsonl (F14) into batch_id -> {"started": [rec, ...],
+    "finished": rec or None}, in file order. Malformed lines are skipped -
+    never 500 on a broken dispatches.jsonl."""
+    batches = {}
+    for line in iter_lines(path):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        batch_id = rec.get("batch_id")
+        if batch_id is None:
+            continue
+        entry = batches.setdefault(batch_id, {"started": [], "finished": None})
+        if rec.get("type") == "started":
+            entry["started"].append(rec)
+        elif rec.get("type") == "finished":
+            entry["finished"] = rec
+    return batches
+
+
+def sessions_view(path, projects_by_path):
+    """GET /api/state's `sessions` field (F14): {running: [...], finished:
+    [...], finished_hidden: N} (N = batches whose finished_at is older than
+    SESSION_WINDOW_SECONDS). `running` uses the same alive-batch condition as
+    running_sessions(); `finished` is sorted newest-first. A `started` record
+    with no `tasks` key (written before this field existed) folds to []."""
+    now = datetime.now(timezone.utc)
+    running, finished, hidden = [], [], 0
+    for batch_id, batch in _load_batches(path).items():
+        fin = batch["finished"]
+        if fin is None:
+            for rec in batch["started"]:
+                try:
+                    pid = int(rec.get("pid", 0))
+                    t0 = _parse_utc(rec["started_at"])
+                except (KeyError, ValueError):
+                    continue
+                if not _pid_alive(pid):
+                    continue
+                running.append({
+                    "batch_id": batch_id, "project": rec.get("project"), "pid": pid,
+                    "started_at": rec["started_at"],
+                    "elapsed_seconds": int((now - t0).total_seconds()),
+                    "tasks": rec.get("tasks", []), "log": rec.get("log"),
+                    "current": _project_current(projects_by_path.get(rec.get("project"))),
+                })
+            continue
+
+        try:
+            finished_at = _parse_utc(fin["finished_at"])
+        except (KeyError, ValueError):
+            continue
+        if (now - finished_at).total_seconds() > SESSION_WINDOW_SECONDS:
+            hidden += 1
+            continue
+        exit_codes = fin.get("exit_codes", [])
+        for i, rec in enumerate(batch["started"]):
+            try:
+                t0 = _parse_utc(rec["started_at"])
+                duration = int((finished_at - t0).total_seconds())
+            except (KeyError, ValueError):
+                duration = None
+            finished.append({
+                "batch_id": batch_id, "project": rec.get("project"), "pid": rec.get("pid"),
+                "started_at": rec.get("started_at"), "finished_at": fin["finished_at"],
+                "duration_seconds": duration,
+                "exit_code": exit_codes[i] if i < len(exit_codes) else None,
+                "tasks": rec.get("tasks", []), "log": rec.get("log"),
+            })
+    finished.sort(key=lambda s: s["finished_at"], reverse=True)
+    return {"running": running, "finished": finished, "finished_hidden": hidden}
 
 
 def _run_dispatch(brief_home, projects, watch):

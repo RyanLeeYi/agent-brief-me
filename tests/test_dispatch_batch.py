@@ -28,6 +28,17 @@ def main():
     with open(os.path.join(home, "config.json"), "w", encoding="utf-8") as f:
         json.dump({"projects": [{"name": "a", "path": pa}, {"name": "b", "path": pb}],
                    "collector": None, "notify": [sys.executable, "-c", FAKE_NOTIFY, calls]}, f)
+    # F14: a pending question + unconsumed answer for project "a", so its
+    # started record's `tasks` should carry the question's title; "b" has
+    # none, so its `tasks` should be [].
+    qid = "11111111-1111-4111-8111-111111111111"
+    with open(os.path.join(home, "inbox.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps({"type": "question", "id": qid, "project": "a",
+                            "title": "Pick a datastore", "body": "b", "severity": "normal",
+                            "created_at": "2026-08-20T09:00:00Z"}) + "\n")
+    with open(os.path.join(home, "answers.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps({"question_id": qid, "chosen": "JSONL",
+                            "answered_at": "2026-08-20T09:05:00Z", "consumed": False}) + "\n")
     # fake claude: a python script that sleeps 1s and exits 0, ignoring args/stdin
     fake = os.path.join(home, "fake_claude.py")
     with open(fake, "w", encoding="utf-8") as f:
@@ -55,6 +66,11 @@ def main():
     assert len({r["batch_id"] for r in started}) == 1
     assert all(r["pid"] and r["started_at"] and r["log"] for r in started)
     print("two started lines, one batch_id - OK")
+
+    by_project = {r["project"]: r for r in started}
+    assert by_project["a"]["tasks"] == ["Pick a datastore"], by_project["a"]
+    assert by_project["b"]["tasks"] == [], by_project["b"]
+    print("started tasks include consumed answer's question title - OK")
 
     def finished():
         rs = [json.loads(l) for l in open(path, encoding="utf-8")]

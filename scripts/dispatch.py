@@ -107,13 +107,14 @@ def iter_lines(path: str):
                 yield line
 
 
-def fold_question_projects(inbox_path: str) -> dict[str, str]:
-    """Map question id -> project, folding inbox.jsonl's `question` lines."""
-    result: dict[str, str] = {}
+def fold_question_projects(inbox_path: str) -> dict[str, dict[str, str]]:
+    """Map question id -> {"project": ..., "title": ...}, folding inbox.jsonl's
+    `question` lines."""
+    result: dict[str, dict[str, str]] = {}
     for line in iter_lines(inbox_path):
         record = json.loads(line)
         if record.get("type") == "question":
-            result[record["id"]] = record["project"]
+            result[record["id"]] = {"project": record["project"], "title": record["title"]}
     return result
 
 
@@ -131,14 +132,26 @@ def fold_answers(answers_path: str) -> dict[str, dict[str, Any]]:
 
 def unconsumed_answers_for(
     project: str,
-    question_project: dict[str, str],
+    question_project: dict[str, dict[str, str]],
     answers_by_question: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     return [
         entry
         for qid, entry in answers_by_question.items()
         if not entry["record"].get("consumed", False)
-        and question_project.get(qid) == project
+        and question_project.get(qid, {}).get("project") == project
+    ]
+
+
+def tasks_for(
+    unconsumed: list[dict[str, Any]],
+    question_project: dict[str, dict[str, str]],
+) -> list[str]:
+    """Question titles for the consumed answers, in prompt order (see
+    build_prompt), for the started record's `tasks` field."""
+    return [
+        question_project.get(entry["record"]["question_id"], {}).get("title", "")
+        for entry in unconsumed
     ]
 
 
@@ -390,6 +403,7 @@ def main(argv: list[str]) -> int:
         atomic_append_line(dispatches_path(brief_home), {
             "type": "started", "batch_id": batch_id, "project": name, "pid": proc.pid,
             "started_at": _now(), "log": None if watch else log_path,
+            "tasks": tasks_for(unconsumed, question_project),
         })
 
         for entry in unconsumed:

@@ -357,12 +357,42 @@ def run_scenes(page, base_url, brief_home, fx):
     with open(os.path.join(brief_home, "running.json"), "w", encoding="utf-8") as f:
         json.dump({proj: {"started_at": "2026-08-22T00:00:00Z", "elapsed_seconds": 754}}, f)
     page.locator("#refresh-btn").click()
-    expect(page.locator(f'.side-item[data-project="{proj}"] .side-item-running')).to_have_text("running 12m")
+    # F14 acceptance #3: the elapsed text became a plain dot (no text).
+    expect(page.locator(f'.side-item[data-project="{proj}"] .side-item-running')).to_be_visible()
+    expect(page.locator(f'.side-item[data-project="{proj}"] .side-item-running')).to_have_text("")
     expect(page.locator('.side-item[data-project="__all__"] .side-item-running')).to_have_count(0)
     os.remove(os.path.join(brief_home, "running.json"))
     page.locator("#refresh-btn").click()
     expect(page.locator(f'.side-item[data-project="{proj}"] .side-item-running')).to_have_count(0)
-    print("scene: sidebar running indicator appears and clears - OK")
+    print("scene: sidebar running indicator shows as a dot (no elapsed text) and clears - OK")
+
+    # ---- F14 (front-end): Sessions sidebar entry + Sessions view ----
+    session_fixture = {
+        "running": [{
+            "batch_id": "batch-1",
+            "project": proj,
+            "pid": 4242,
+            "started_at": "2026-08-22T00:00:00Z",
+            "elapsed_seconds": 754,
+            "tasks": ["Task Alpha", "Task Beta"],
+            "log": None,
+            "current": {"feature": "F14", "mtime": now_iso()},
+        }],
+        "finished": [],
+        "finished_hidden": 1,
+    }
+    with open(os.path.join(brief_home, "sessions.json"), "w", encoding="utf-8") as f:
+        json.dump(session_fixture, f)
+    page.locator("#refresh-btn").click()
+    expect(page.locator("#sessions-entry")).to_contain_text("Sessions")
+    expect(page.locator("#sessions-entry")).to_contain_text("1 running")
+    expect(page.locator(f'.side-item[data-project="{proj}"]')).not_to_contain_text("running ")
+    page.locator("#sessions-entry").click()
+    expect(page.locator("#sessions-view")).to_be_visible()
+    expect(page.locator("#sessions-running-list .task-chip")).to_have_count(2)
+    expect(page.locator("#sessions-finished-hidden")).to_contain_text("older hidden: 1")
+    os.remove(os.path.join(brief_home, "sessions.json"))
+    print("scene: Sessions sidebar entry + Sessions view (tasks chips, older hidden) - OK")
 
 
 if __name__ == "__main__":

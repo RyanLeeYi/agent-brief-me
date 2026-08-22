@@ -17,6 +17,7 @@ import unittest
 import urllib.error
 import urllib.request
 import uuid
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 import brief_me  # noqa: E402
@@ -369,6 +370,76 @@ class BriefMeAPITestCase(unittest.TestCase):
             self.assertIn(qid, answers_by_question)
             self.assertEqual(answers_by_question[qid]["chosen"], "A")
             self.assertTrue(answers_by_question[qid]["consumed"])
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
+
+    # -- GET /api/state sessions (F14) ----------------------------------
+    def test_state_sessions_running_finished_window_and_current(self):
+        project_dir = tempfile.mkdtemp(prefix="brief-project-")
+        try:
+            self._write_config(projects=[{"name": "demo", "path": project_dir}])
+
+            def ts(dt):
+                return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            now = datetime.now(timezone.utc)
+            batch_running = str(uuid.uuid4())
+            batch_recent = str(uuid.uuid4())  # finished 3 days ago: kept
+            batch_old = str(uuid.uuid4())     # finished 10 days ago: hidden
+
+            records = [
+                {"type": "started", "batch_id": batch_running, "project": "demo",
+                 "pid": os.getpid(), "started_at": ts(now - timedelta(minutes=5)),
+                 "log": "/tmp/demo.log", "tasks": ["Pick a datastore"]},
+                # legacy started record with no "tasks" key - must not 500
+                {"type": "started", "batch_id": batch_recent, "project": "demo",
+                 "pid": 999001, "started_at": ts(now - timedelta(days=3, minutes=5)),
+                 "log": None},
+                {"type": "finished", "batch_id": batch_recent,
+                 "finished_at": ts(now - timedelta(days=3)), "exit_codes": [0]},
+                {"type": "started", "batch_id": batch_old, "project": "demo",
+                 "pid": 999002, "started_at": ts(now - timedelta(days=10, minutes=5)),
+                 "log": None, "tasks": []},
+                {"type": "finished", "batch_id": batch_old,
+                 "finished_at": ts(now - timedelta(days=10)), "exit_codes": [1]},
+            ]
+            with open(os.path.join(self.home, "dispatches.jsonl"), "w", encoding="utf-8") as f:
+                for rec in records:
+                    f.write(json.dumps(rec) + "\n")
+
+            # current is null before .harness/current_feature exists.
+            status, data = self._get("/api/state")
+            self.assertEqual(status, 200)
+            sessions = data["sessions"]
+            self.assertEqual(len(sessions["running"]), 1)
+            self.assertEqual(len(sessions["finished"]), 1)
+            self.assertEqual(sessions["finished_hidden"], 1)
+
+            run = sessions["running"][0]
+            self.assertEqual(run["batch_id"], batch_running)
+            self.assertEqual(run["project"], "demo")
+            self.assertEqual(run["pid"], os.getpid())
+            self.assertEqual(run["tasks"], ["Pick a datastore"])
+            self.assertEqual(run["log"], "/tmp/demo.log")
+            self.assertIsNone(run["current"])
+
+            fin = sessions["finished"][0]
+            self.assertEqual(fin["batch_id"], batch_recent)
+            self.assertEqual(fin["tasks"], [])  # legacy record, no tasks key
+            self.assertEqual(fin["exit_code"], 0)
+            self.assertIsInstance(fin["duration_seconds"], int)
+            self.assertGreater(fin["duration_seconds"], 0)
+
+            # current reflects an existing .harness/current_feature file.
+            harness_dir = os.path.join(project_dir, ".harness")
+            os.makedirs(harness_dir, exist_ok=True)
+            with open(os.path.join(harness_dir, "current_feature"), "w", encoding="utf-8") as f:
+                f.write("F14\n")
+
+            _, data = self._get("/api/state")
+            current = data["sessions"]["running"][0]["current"]
+            self.assertEqual(current["feature"], "F14")
+            self.assertIn("mtime", current)
         finally:
             shutil.rmtree(project_dir, ignore_errors=True)
 

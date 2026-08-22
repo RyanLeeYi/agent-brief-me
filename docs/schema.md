@@ -200,14 +200,24 @@ Written only by `scripts/dispatch.py`; append-only like the other files.
 Two shapes, discriminated by `type`:
 
 ```json
-{"type": "started", "batch_id": "<uuid4 shared by one dispatch.py run>", "project": "my-project", "pid": 12345, "started_at": "2026-08-22T01:02:03Z", "log": "/path/to/logs/my-project-<hex>.log"}
+{"type": "started", "batch_id": "<uuid4 shared by one dispatch.py run>", "project": "my-project", "pid": 12345, "started_at": "2026-08-22T01:02:03Z", "log": "/path/to/logs/my-project-<hex>.log", "tasks": ["Which datastore for the inbox?"]}
 {"type": "finished", "batch_id": "<same uuid4>", "finished_at": "2026-08-22T01:20:00Z", "exit_codes": [0, 0]}
 ```
 
-`log` is `null` for `--watch` windows. A project is *running* when it has a
-`started` line whose batch has no `finished` line and whose `pid` is still
-alive (unknown counts as alive); `GET /api/state` exposes that as
-`running: {project: {started_at, elapsed_seconds}}`.
+`log` is `null` for `--watch` windows. `tasks` is the question `title` of
+every unconsumed answer this dispatch consumed for that project, in the same
+order as the prompt (empty array if none). Records written before this field
+existed have no `tasks` key; readers must treat a missing `tasks` as `[]`,
+never error on it.
+
+A project is *running* when it has a `started` line whose batch has no
+`finished` line and whose `pid` is still alive (unknown counts as alive);
+`GET /api/state` exposes that as `running: {project: {started_at,
+elapsed_seconds}}`, plus a `sessions: {running: [...], finished: [...],
+finished_hidden: N}` field (running/finished session details, `tasks`
+included; `finished_hidden` is the session count older than the 7-day
+`finished` window) - see F14's acceptance in `feature_list.json`/
+`docs/archive/features.jsonl` for the exact per-session shape.
 
 ## Atomic append rule
 

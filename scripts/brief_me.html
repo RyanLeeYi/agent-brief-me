@@ -70,6 +70,18 @@
   #dismissed-entry:hover{ background:var(--bg-card); }
   #dismissed-entry.active{ background:var(--accent-bg); color:var(--accent); }
 
+  #sessions-entry{
+    display:flex; align-items:center; justify-content:space-between;
+    width:calc(100% - 16px); margin:0 8px 8px;
+    min-height:36px; padding:6px 10px; border-radius:var(--radius);
+    text-align:left; color:var(--text-secondary); cursor:pointer;
+    transition:background var(--transition), color var(--transition);
+  }
+  #sessions-entry:hover{ background:var(--bg-card); }
+  #sessions-entry.active{ background:var(--accent-bg); color:var(--accent); }
+  #sessions-count{ font-size:12px; color:var(--text-muted); }
+  #sessions-entry.active #sessions-count{ color:var(--accent); }
+
   #answers-panel{
     margin-top:auto; border-top:1px solid var(--border);
     padding:12px; display:flex; flex-direction:column; gap:8px;
@@ -159,7 +171,7 @@
   .badge-high{ background:var(--danger); color:#fff; }
   .badge-multi{ background:var(--accent-bg); color:var(--accent); text-transform:none; margin-left:6px; }
   .card-project{ color:var(--text-muted); font-size:12px; }
-  .side-item-running{ color:var(--text-muted); font-size:11px; margin-left:6px; }
+  .side-item-running{ width:6px; height:6px; border-radius:50%; background:var(--accent); flex:0 0 auto; margin-left:6px; }
   .card-age{ color:var(--text-muted); font-size:12px; margin-left:auto; }
   .card-title{ margin:0 0 6px; font-size:15px; }
   .card-body-text{ margin:0 0 12px; color:var(--text-secondary); white-space:pre-wrap; }
@@ -226,6 +238,21 @@
   }
   .dismissed-card .card-title{ flex:1; }
 
+  /* ---------- sessions view ---------- */
+  .session-tasks{ display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .task-chip{
+    font-family:'IBM Plex Mono', Consolas, monospace; font-size:12px;
+    padding:2px 8px; border:1px solid var(--border-strong); border-radius:12px;
+    color:var(--text-secondary);
+  }
+  .session-current{ color:var(--text-muted); font-size:12px; }
+  .session-row{
+    display:flex; flex-wrap:wrap; align-items:center; gap:12px;
+    padding:10px 0; border-bottom:1px solid var(--border);
+  }
+  .text-danger{ color:var(--danger-2); }
+  #sessions-finished-hidden{ color:var(--text-muted); font-size:12px; margin-left:auto; }
+
   /* ---------- toast ---------- */
   #toast-container{ position:fixed; right:24px; bottom:24px; display:flex; flex-direction:column; gap:8px; z-index:1000; }
   .toast{
@@ -256,6 +283,7 @@
   <aside id="sidebar">
     <div id="project-list" role="list"></div>
     <button id="dismissed-entry" type="button"></button>
+    <button id="sessions-entry" type="button"><span>Sessions</span><span id="sessions-count"></span></button>
     <div id="answers-panel">
       <div id="unsaved-count">0 unsaved</div>
       <div id="answers-projects"></div>
@@ -318,6 +346,25 @@
         </div>
         <div id="dismissed-list"></div>
       </div>
+
+      <div id="sessions-view" hidden>
+        <section id="sessions-running-section">
+          <div class="section-header">
+            <span>Running</span>
+            <span class="count">(<span id="sessions-running-count">0</span>)</span>
+          </div>
+          <div class="section-body" id="sessions-running-list"></div>
+        </section>
+        <section id="sessions-finished-section">
+          <div class="section-header">
+            <span>Finished</span>
+            <span class="count">(<span id="sessions-finished-count">0</span>)</span>
+            <span id="sessions-finished-hidden"></span>
+          </div>
+          <div class="section-body" id="sessions-finished-list"></div>
+        </section>
+        <p class="empty-state" id="sessions-empty" hidden>No sessions.</p>
+      </div>
     </div>
   </main>
 </div>
@@ -343,6 +390,8 @@
   var sidebarEl = document.getElementById('sidebar');
   var projectListEl = document.getElementById('project-list');
   var dismissedEntryEl = document.getElementById('dismissed-entry');
+  var sessionsEntryEl = document.getElementById('sessions-entry');
+  var sessionsCountEl = document.getElementById('sessions-count');
   var unsavedCountEl = document.getElementById('unsaved-count');
   var answersProjectsEl = document.getElementById('answers-projects');
   var dispatchRowEl = document.getElementById('dispatch-row');
@@ -370,6 +419,16 @@
   var dismissedMatchCountEl = document.getElementById('dismissed-match-count');
   var dismissedListEl = document.getElementById('dismissed-list');
 
+  var sessionsViewEl = document.getElementById('sessions-view');
+  var sessionsRunningSectionEl = document.getElementById('sessions-running-section');
+  var sessionsRunningCountEl = document.getElementById('sessions-running-count');
+  var sessionsRunningListEl = document.getElementById('sessions-running-list');
+  var sessionsFinishedSectionEl = document.getElementById('sessions-finished-section');
+  var sessionsFinishedCountEl = document.getElementById('sessions-finished-count');
+  var sessionsFinishedListEl = document.getElementById('sessions-finished-list');
+  var sessionsFinishedHiddenEl = document.getElementById('sessions-finished-hidden');
+  var sessionsEmptyEl = document.getElementById('sessions-empty');
+
   var toastContainerEl = document.getElementById('toast-container');
   var confirmOverlayEl = document.getElementById('confirm-overlay');
   var confirmListEl = document.getElementById('confirm-list');
@@ -379,7 +438,7 @@
   // -------------------------------------------------------------- state ----
   var state = {
     data: emptyState(),
-    view: 'inbox',            // 'inbox' | 'dismissed'
+    view: 'inbox',            // 'inbox' | 'dismissed' | 'sessions'
     currentProject: '__all__',
     selections: {},            // question id -> per-question UI record ("qui")
     reportsReadLocally: {},    // report id -> true, once /api/read has been posted this page life
@@ -390,7 +449,8 @@
   function emptyState() {
     return {
       collector_warning: null, unread_reports: {}, pending_questions: {},
-      unconsumed_projects: [], projects: [], unconsumed_counts: {}, dismissed: {}, running: {}
+      unconsumed_projects: [], projects: [], unconsumed_counts: {}, dismissed: {}, running: {},
+      sessions: { running: [], finished: [], finished_hidden: 0 }
     };
   }
 
@@ -695,15 +755,16 @@
   function renderApp() {
     renderSidebar();
     updateHeader();
+    inboxViewEl.hidden = state.view !== 'inbox';
+    dismissedViewEl.hidden = state.view !== 'dismissed';
+    sessionsViewEl.hidden = state.view !== 'sessions';
     if (state.view === 'inbox') {
-      inboxViewEl.hidden = false;
-      dismissedViewEl.hidden = true;
       renderQuestions();
       renderReports();
-    } else {
-      inboxViewEl.hidden = true;
-      dismissedViewEl.hidden = false;
+    } else if (state.view === 'dismissed') {
       renderDismissedView();
+    } else if (state.view === 'sessions') {
+      renderSessions();
     }
     updateAnswersPanel();
   }
@@ -722,6 +783,12 @@
     return Math.floor(sec / 86400) + 'd';
   }
 
+  function timeAgo(iso) {
+    var t = Date.parse(iso);
+    if (isNaN(t)) return '0s';
+    return elapsedString(Math.max(0, Math.floor((Date.now() - t) / 1000)));
+  }
+
   function renderSidebar() {
     var items = ['__all__'].concat(state.data.projects);
     projectListEl.innerHTML = items.map(function (p) {
@@ -732,7 +799,7 @@
         '<span class="dot dot-' + stats.dot + '"></span>' +
         '<span class="side-item-name">' + escapeHtml(label) + '</span>' +
         (p !== '__all__' && state.data.running && state.data.running[p]
-          ? '<span class="side-item-running">running ' + escapeHtml(elapsedString(state.data.running[p].elapsed_seconds)) + '</span>' : '') +
+          ? '<span class="side-item-running"></span>' : '') +
         '<span class="side-item-stats">' + stats.unread + ' · ' + stats.pending + '</span>' +
         '</button>';
     }).join('');
@@ -742,6 +809,10 @@
     }, 0);
     dismissedEntryEl.textContent = 'Dismissed (' + totalDismissed + ')';
     dismissedEntryEl.classList.toggle('active', state.view === 'dismissed');
+
+    var runningSessions = (state.data.sessions && state.data.sessions.running) || [];
+    sessionsCountEl.textContent = runningSessions.length > 0 ? runningSessions.length + ' running' : '';
+    sessionsEntryEl.classList.toggle('active', state.view === 'sessions');
   }
 
   function renderQuestions() {
@@ -1025,6 +1096,64 @@
     });
   }
 
+  // ------------------------------------------------------------ sessions ----
+  function tasksChipsHTML(tasks) {
+    return (tasks || []).map(function (t) {
+      return '<span class="task-chip">' + escapeHtml(t) + '</span>';
+    }).join('');
+  }
+
+  function sessionRunningCardHTML(s) {
+    var badge = s.log == null ? '<span class="badge">WATCH</span>' : '<span class="badge">LOG</span>';
+    var currentHtml = s.current
+      ? escapeHtml(s.current.feature) + ' &middot; ' + timeAgo(s.current.mtime) + ' ago'
+      : 'no current_feature';
+    return '' +
+      '<article class="question-card" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
+        '<div class="card-meta">' +
+          '<span class="dot dot-green"></span>' +
+          '<span class="card-project">' + escapeHtml(s.project) + '</span>' +
+          badge +
+          '<span class="card-project">pid ' + escapeHtml(s.pid) + '</span>' +
+          '<span class="card-age">' + escapeHtml(elapsedString(s.elapsed_seconds)) + '</span>' +
+        '</div>' +
+        '<div class="session-tasks">' + tasksChipsHTML(s.tasks) + '</div>' +
+        '<div class="session-current">' + currentHtml + '</div>' +
+      '</article>';
+  }
+
+  function sessionFinishedRowHTML(s) {
+    var exitHtml = '<span' + (s.exit_code !== 0 ? ' class="text-danger"' : '') + '>exit ' + escapeHtml(s.exit_code) + '</span>';
+    var logHtml = s.log ? '<span class="mono">log: ' + escapeHtml(s.log) + '</span>' : '';
+    return '' +
+      '<div class="session-row" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
+        '<span class="card-project">' + escapeHtml(s.project) + '</span>' +
+        tasksChipsHTML(s.tasks) +
+        exitHtml +
+        '<span class="card-age">' + escapeHtml(elapsedString(s.duration_seconds)) + '</span>' +
+        logHtml +
+      '</div>';
+  }
+
+  function renderSessions() {
+    var sessions = state.data.sessions || { running: [], finished: [], finished_hidden: 0 };
+    var running = sessions.running || [];
+    var finished = sessions.finished || [];
+    var hidden = sessions.finished_hidden || 0;
+    var totalEmpty = running.length === 0 && finished.length === 0;
+
+    sessionsEmptyEl.hidden = !totalEmpty;
+    sessionsRunningSectionEl.hidden = totalEmpty;
+    sessionsFinishedSectionEl.hidden = totalEmpty;
+
+    sessionsRunningCountEl.textContent = running.length;
+    sessionsRunningListEl.innerHTML = running.map(sessionRunningCardHTML).join('');
+
+    sessionsFinishedCountEl.textContent = finished.length;
+    sessionsFinishedListEl.innerHTML = finished.map(sessionFinishedRowHTML).join('');
+    sessionsFinishedHiddenEl.textContent = hidden > 0 ? 'older hidden: ' + hidden : '';
+  }
+
   // ------------------------------------------------------------- events ----
   var appEl = document.getElementById('app');
   var sidebarToggleEl = document.getElementById('sidebar-toggle');
@@ -1053,6 +1182,11 @@
   });
   dismissedEntryEl.addEventListener('click', function () {
     state.view = 'dismissed';
+    renderApp();
+    if (isMobile()) closeDrawer();
+  });
+  sessionsEntryEl.addEventListener('click', function () {
+    state.view = 'sessions';
     renderApp();
     if (isMobile()) closeDrawer();
   });

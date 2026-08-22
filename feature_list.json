@@ -2,5 +2,31 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F14",
+      "title": "Sessions 頁：派出的 session 在做哪些任務、跑多久、結果",
+      "status": "failing",
+      "signed_off": true,
+      "touches": [
+        "scripts/dispatch.py",
+        "scripts/brief_me.py",
+        "scripts/brief_me.html",
+        "docs/schema.md",
+        "tests/test_dispatch_batch.py",
+        "tests/test_brief_me_api.py",
+        "tests/test_brief_me_html.py"
+      ],
+      "requires": [
+        "F13"
+      ],
+      "acceptance": [
+        "dispatch.py 的 started 記錄多一個 `tasks` 欄位：該次派工 consumed 的每則 answer 對應的 question title 陣列（順序同 prompt），沒有就是空陣列；docs/schema.md 同步。舊記錄沒有此欄位時視為空陣列，不得 500。",
+        "GET /api/state 多一個 `sessions` 欄位：{running: [...], finished: [...]}。running 元素＝{batch_id, project, pid, started_at, elapsed_seconds, tasks, log, current}，判定條件同既有 `running`（batch 無 finished 且 pid 存活）；`current` 是該專案 path 下 `.harness/current_feature` 的內容字串與檔案 mtime 的 ISO 時間，檔案不存在為 null。finished 元素＝{batch_id, project, pid, started_at, finished_at, duration_seconds, exit_code, tasks, log}，只含 finished_at 在最近 7 天內（UTC）的 batch，依 finished_at 新到舊排序；另回傳 `finished_hidden`（7 天前被略過的 session 數）。既有 `running` 欄位維持不變。",
+        "Web UI 側欄：Dismissed 下方新增 `Sessions` 入口，右側顯示 `<N> running`（N=0 時不顯示數字）；專案列原本的 `running <elapsed>` 文字改為一顆綠點（不顯示時間）；All projects 列不變。",
+        "Sessions 檢視分 Running／Finished 兩段。Running 每個 session 一張卡：專案名、pid、watch 或 log 標記、elapsed（沿用 elapsedString）、tasks 逐一顯示為晶片、current 一行（內容＋「<age> ago」，null 顯示 `no current_feature`）。Finished 每個 session 一列：專案名、tasks、exit code（非 0 用 danger 色）、duration、log 有路徑時顯示 `log` 文字（純顯示路徑即可，不必開檔）。段標題旁顯示 `older hidden: <finished_hidden>`（為 0 時不顯示）。沒有任何 session 時顯示 empty-state。Refresh 重抓。",
+        "tests：test_dispatch_batch.py 驗證 started 記錄帶 tasks（含 consumed answer 時為其 title）；test_brief_me_api.py 用 fixture dispatches.jsonl（一筆 running、一筆 3 天前 finished、一筆 10 天前 finished）驗證 sessions.running／finished 各一筆、finished_hidden=1、舊記錄缺 tasks 不 500、current 在有無 `.harness/current_feature` 時的值；test_brief_me_html.py 加 scene：stub 回傳 sessions 時側欄出現 `Sessions` 與 `1 running`、專案列不含 `running ` 文字、Sessions 檢視出現 tasks 晶片與 `older hidden: 1`。"
+      ]
+    }
+  ]
 }

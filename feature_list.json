@@ -6,7 +6,7 @@
     {
       "id": "F23",
       "name": "Sessions 的 tasks 固定格式：派工時正規化為 {feature, kind, title}，UI 以「Fxx · 類型」一行一個顯示",
-      "status": "failing",
+      "status": "passing",
       "touches": [
         "scripts/dispatch.py",
         "scripts/brief_me.html",
@@ -21,7 +21,10 @@
         "tests/test_brief_me_html.py：sessions fixture 改成物件格式並加一筆 legacy 字串；斷言 Finished 列出現 `F19 · 簽核` 與 legacy 原字串、Running chip 的 current 高亮仍對 `t.feature` 生效。tests/test_brief_me_api.py 既有 tasks 斷言改為物件格式，legacy 字串記錄仍不 500。",
         "`python -m unittest discover tests`（3.13）與 `py -3.13 tests/test_brief_me_html.py` 全綠。"
       ],
-      "signed_off": true
+      "signed_off": true,
+      "evidence": [
+        "acceptance-verifier 2026-08-23: 6/6 pass (HEAD 0a7234a); 34 unittest + 16 Playwright scenes green"
+      ]
     }
   ]
 }

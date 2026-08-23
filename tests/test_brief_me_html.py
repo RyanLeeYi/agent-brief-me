@@ -415,7 +415,7 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(rows).to_have_count(2)
     expect(rows.nth(0)).to_contain_text("REPORT")
     expect(rows.nth(0)).not_to_contain_text("exit")
-    expect(rows.nth(1)).to_contain_text("exit 0")
+    expect(rows.nth(1)).to_contain_text("Exit 0")
     os.remove(os.path.join(brief_home, "sessions.json"))
     print("scene: Finished row ended_by=report shows REPORT badge - OK")
 

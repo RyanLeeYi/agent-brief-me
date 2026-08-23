@@ -1209,8 +1209,8 @@
       case 'report': return '<span class="badge badge-outcome-report">' + OUTCOME_ICON_CHECK + ' REPORT</span>';
       case 'killed': return '<span class="badge badge-outcome-killed">' + OUTCOME_ICON_CROSS + ' KILLED</span>';
       case 'ctrl_c': return '<span class="badge badge-outcome-ctrlc">' + OUTCOME_ICON_BANG + ' CTRL-C</span>';
-      case 'ok': return '<span class="badge">exit 0</span>';
-      case 'exit': return '<span class="badge">exit ' + escapeHtml(s.exit_code) + '</span>';
+      case 'ok': return '<span class="badge">Exit 0</span>';
+      case 'exit': return '<span class="badge">Exit ' + escapeHtml(s.exit_code) + '</span>';
       default: return '<span class="badge">unknown</span>';
     }
   }

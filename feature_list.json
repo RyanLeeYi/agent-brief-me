@@ -20,7 +20,8 @@
         "brief_me.html：新增 `taskLabel(t)`——t 為字串（legacy）回傳原字串；物件則 feature 非 null 回 `F13 · 簽核`／`F13 · 派工`／`F13 · 問題`（kind 對應中文固定：sign-off→簽核、dispatch→派工、question→問題），feature 為 null 回 `title`。Running 卡片的 chip 與 Finished 列的 tasks 都改用 `taskLabel`，Finished 列一行一個 task（不再用 `compressFeatureIds` 的 `+N`；`compressFeatureIds` 刪除），`task-chip--current` 的比對改用 `t.feature`。",
         "tests/test_brief_me_html.py：sessions fixture 改成物件格式並加一筆 legacy 字串；斷言 Finished 列出現 `F19 · 簽核` 與 legacy 原字串、Running chip 的 current 高亮仍對 `t.feature` 生效。tests/test_brief_me_api.py 既有 tasks 斷言改為物件格式，legacy 字串記錄仍不 500。",
         "`python -m unittest discover tests`（3.13）與 `py -3.13 tests/test_brief_me_html.py` 全綠。"
-      ]
+      ],
+      "signed_off": true
     }
   ]
 }

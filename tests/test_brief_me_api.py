@@ -483,6 +483,84 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(fin["finished_at"], ts(started_at + timedelta(minutes=3)))
         self.assertEqual(fin["duration_seconds"], 180)
 
+    # -- GET /api/state sessions outcome/report_id (F20) -----------------
+    def test_state_sessions_outcome_exit_codes(self):
+        """F20: exit_code -> outcome mapping (killed/ctrl_c/ok/exit), and
+        finished_counts tallies report + killed (killed folds in ctrl_c)."""
+        self._write_config(projects=[
+            {"name": "killed-proj", "path": self.home},
+            {"name": "ctrlc-proj", "path": self.home},
+            {"name": "ok-proj", "path": self.home},
+            {"name": "exit-proj", "path": self.home},
+        ])
+
+        def ts(dt):
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        now = datetime.now(timezone.utc)
+        started_at = now - timedelta(minutes=10)
+        finished_at = now - timedelta(minutes=1)
+        batch = str(uuid.uuid4())
+        projects = ["killed-proj", "ctrlc-proj", "ok-proj", "exit-proj"]
+        exit_codes = [4294967295, 3221225786, 0, 2]
+        records = [{"type": "started", "batch_id": batch, "project": p,
+                    "pid": 900000 + i, "started_at": ts(started_at), "log": None, "tasks": []}
+                   for i, p in enumerate(projects)]
+        records.append({"type": "finished", "batch_id": batch, "finished_at": ts(finished_at),
+                        "exit_codes": exit_codes})
+        with open(os.path.join(self.home, "dispatches.jsonl"), "w", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+
+        _, data = self._get("/api/state")
+        finished = {row["project"]: row for row in data["sessions"]["finished"]}
+        self.assertEqual(finished["killed-proj"]["outcome"], "killed")
+        self.assertEqual(finished["ctrlc-proj"]["outcome"], "ctrl_c")
+        self.assertEqual(finished["ok-proj"]["outcome"], "ok")
+        self.assertEqual(finished["exit-proj"]["outcome"], "exit")
+        for row in finished.values():
+            self.assertIsNone(row["report_id"])
+        self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 2})
+
+    def test_state_sessions_report_id_links_nearest_report_at_or_after_finish(self):
+        """F20: report_id picks the earliest report at/after finished_at (an
+        earlier report for the same project must not leak in), carries the
+        report's "blocked" segment as report_note, and outcome stays as
+        computed from exit_code even when a report_id is also present
+        (Ctrl-C + a later report is still ctrl_c, not overridden to
+        "report")."""
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+
+        def ts(dt):
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        now = datetime.now(timezone.utc)
+        started_at = now - timedelta(minutes=10)
+        finished_at = now - timedelta(minutes=5)
+        batch = str(uuid.uuid4())
+        with open(os.path.join(self.home, "dispatches.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "started", "batch_id": batch, "project": "demo",
+                                "pid": 900010, "started_at": ts(started_at), "log": None, "tasks": []}) + "\n")
+            f.write(json.dumps({"type": "finished", "batch_id": batch, "finished_at": ts(finished_at),
+                                "exit_codes": [3221225786]}) + "\n")
+
+        def report(rid, created, summary):
+            return json.dumps({"type": "report", "id": rid, "project": "demo",
+                               "summary": summary, "severity": "normal", "created_at": ts(created)})
+
+        earlier_id, later_id = str(uuid.uuid4()), str(uuid.uuid4())
+        with open(self._inbox_path(), "w", encoding="utf-8") as f:
+            f.write(report(earlier_id, finished_at - timedelta(minutes=1), "should not be picked") + "\n")
+            f.write(report(later_id, finished_at + timedelta(minutes=2),
+                           "F1 passing；waiting on review；handoff.md") + "\n")
+
+        _, data = self._get("/api/state")
+        fin = data["sessions"]["finished"][0]
+        self.assertEqual(fin["outcome"], "ctrl_c")
+        self.assertEqual(fin["report_id"], later_id)
+        self.assertEqual(fin["report_note"], "waiting on review")
+        self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 1})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -15,6 +15,7 @@
     --accent:#3fb950; --accent-bg:rgba(63,185,80,0.12);
     --btn-primary:#238636; --btn-primary-hover:#2ea043;
     --danger:#f85149; --danger-2:#ff7b72; --warning:#d29922;
+    --danger-bg:rgba(248,81,73,0.04);
     --radius:6px; --transition:150ms ease; --sidebar-width:264px;
   }
   *{ box-sizing:border-box; }
@@ -245,11 +246,26 @@
     padding:2px 8px; border:1px solid var(--border-strong); border-radius:12px;
     color:var(--text-secondary);
   }
-  .session-current{ color:var(--text-muted); font-size:12px; }
+  .task-chip--current{ border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+  .session-card-running{ border-left:3px solid var(--accent); }
+  .session-footer{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:8px; font-size:12px; color:var(--text-muted); }
+  .session-progress-bar{ display:inline-block; width:120px; height:4px; border-radius:2px; background:var(--border); overflow:hidden; vertical-align:middle; }
+  .session-progress-fill{ display:block; height:100%; background:var(--accent); }
+  .session-table-head{
+    display:grid; grid-template-columns:92px 150px 1fr 60px 50px 140px; gap:12px;
+    font-size:11px; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-muted);
+    padding:0 0 6px;
+  }
   .session-row{
-    display:flex; flex-wrap:wrap; align-items:center; gap:12px;
+    display:grid; grid-template-columns:92px 150px 1fr 60px 50px 140px; gap:12px; align-items:center;
     padding:10px 0; border-bottom:1px solid var(--border);
   }
+  .session-row--danger{ background:var(--danger-bg); }
+  .session-subtext{ font-size:12px; color:var(--text-muted); margin-top:2px; }
+  .badge-outcome-report{ background:var(--accent-bg); color:var(--accent); }
+  .badge-outcome-killed{ background:var(--danger); color:#fff; }
+  .badge-outcome-ctrlc{ background:var(--warning); color:#fff; }
+  .badge svg{ vertical-align:-1px; margin-right:2px; }
   .text-danger{ color:var(--danger-2); }
   #sessions-finished-hidden{ color:var(--text-muted); font-size:12px; margin-left:auto; }
 
@@ -360,6 +376,9 @@
             <span>Finished</span>
             <span class="count">(<span id="sessions-finished-count">0</span>)</span>
             <span id="sessions-finished-hidden"></span>
+          </div>
+          <div class="session-table-head">
+            <span>Outcome</span><span>Project</span><span>Tasks</span><span>Took</span><span>Ended</span><span>Next</span>
           </div>
           <div class="section-body" id="sessions-finished-list"></div>
         </section>
@@ -1097,19 +1116,127 @@
   }
 
   // ------------------------------------------------------------ sessions ----
-  function tasksChipsHTML(tasks) {
+  function tasksChipsHTML(tasks, currentFeature) {
     return (tasks || []).map(function (t) {
-      return '<span class="task-chip">' + escapeHtml(t) + '</span>';
+      var cls = 'task-chip' + (currentFeature && t === currentFeature ? ' task-chip--current' : '');
+      return '<span class="' + cls + '">' + escapeHtml(t) + '</span>';
     }).join('');
+  }
+
+  // F20's Tasks-column chip: consecutive same-prefix feature ids compress
+  // into a range ("F19-F21"); more than 3 collapses to a bare count so the
+  // column never explodes for a big batch.
+  var FEATURE_ID_RE = /^([A-Za-z]+)(\d+)$/;
+  function compressFeatureIds(tasks) {
+    tasks = tasks || [];
+    if (!tasks.length) return '';
+    if (tasks.length > 3) return '+' + tasks.length;
+    var segments = [], i = 0;
+    while (i < tasks.length) {
+      var m = FEATURE_ID_RE.exec(tasks[i]);
+      if (!m) { segments.push(tasks[i]); i++; continue; }
+      var prefix = m[1], start = parseInt(m[2], 10), end = start, j = i + 1;
+      for (; j < tasks.length; j++) {
+        var m2 = FEATURE_ID_RE.exec(tasks[j]);
+        if (!m2 || m2[1] !== prefix || parseInt(m2[2], 10) !== end + 1) break;
+        end++;
+      }
+      segments.push(end > start ? prefix + start + '-' + prefix + end : prefix + start);
+      i = j;
+    }
+    return segments.join(',');
+  }
+
+  // Backward compat: a sessions.json written before F20 (or by any other
+  // producer) may not carry `outcome` - derive it the same way
+  // brief_me.py's _finished_outcome() does.
+  function sessionOutcome(s) {
+    if (s.outcome) return s.outcome;
+    if (s.ended_by === 'report') return 'report';
+    var code = s.exit_code;
+    if (code === null || code === undefined) return 'unknown';
+    if (code === 4294967295 || code === -1) return 'killed';
+    if (code === 3221225786) return 'ctrl_c';
+    return code === 0 ? 'ok' : 'exit';
+  }
+
+  var OUTCOME_ICON_CHECK = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 5.3l2.3 2.3L8.5 2.3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var OUTCOME_ICON_CROSS = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+  var OUTCOME_ICON_BANG = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="5" cy="8" r="0.8" fill="currentColor"/></svg>';
+
+  function outcomeBadgeHTML(s) {
+    switch (sessionOutcome(s)) {
+      // Literal upper case (not relying on .badge's CSS transform) matches
+      // this file's existing badge convention (WATCH/LOG chips above).
+      case 'report': return '<span class="badge badge-outcome-report">' + OUTCOME_ICON_CHECK + ' REPORT</span>';
+      case 'killed': return '<span class="badge badge-outcome-killed">' + OUTCOME_ICON_CROSS + ' KILLED</span>';
+      case 'ctrl_c': return '<span class="badge badge-outcome-ctrlc">' + OUTCOME_ICON_BANG + ' CTRL-C</span>';
+      case 'ok': return '<span class="badge">exit 0</span>';
+      case 'exit': return '<span class="badge">exit ' + escapeHtml(s.exit_code) + '</span>';
+      default: return '<span class="badge">unknown</span>';
+    }
+  }
+
+  function tasksSubtextHTML(s) {
+    if (s.report_id) {
+      return '<div class="session-subtext">' + escapeHtml(s.report_note || '') + '</div>';
+    }
+    if (sessionOutcome(s) === 'killed') {
+      return '<div class="session-subtext text-danger">no report</div>';
+    }
+    return '';
+  }
+
+  // Best-effort only: today's dispatch record carries no session_id field,
+  // and the log filename is `{project}-{dispatchuuid}.log` (a dispatch id,
+  // not a Claude session id), so this normally returns null and the caller
+  // falls back to "open log".
+  // ponytail: log-filename sniffing is a dead branch until dispatch.py (or
+  // the started record) actually carries a resumable session id; upgrade
+  // path is there, not invented here.
+  function batchSessionId(s) {
+    if (s.session_id) return s.session_id;
+    var name = (s.log || '').split(/[\\/]/).pop();
+    var m = /^(?:.+-)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.log$/i.exec(name);
+    return m ? m[1] : null;
+  }
+
+  function sessionNextHTML(s) {
+    if (s.report_id) {
+      return '<button type="button" class="btn-link" data-action="open-report" data-report-id="' + escapeHtml(s.report_id) + '">open report</button>';
+    }
+    if (sessionOutcome(s) === 'killed') {
+      var sid = batchSessionId(s);
+      if (sid) return '<button type="button" class="resume-cmd" data-action="copy-resume" data-session="' + escapeHtml(sid) + '">--resume ' + escapeHtml(sid) + '</button>';
+    }
+    if (s.log) {
+      return '<button type="button" class="btn-link" data-action="open-log" data-log="' + escapeHtml(s.log) + '">open log</button>';
+    }
+    return '';
+  }
+
+  function sessionProgressHTML(s) {
+    var cur = s.current;
+    if (!cur) return '';
+    var parts = [];
+    if (typeof cur.passing === 'number' && typeof cur.total === 'number' && cur.total > 0) {
+      var pct = Math.max(0, Math.min(100, Math.round((cur.passing / cur.total) * 100)));
+      parts.push('<span class="session-progress-bar"><span class="session-progress-fill" style="width:' + pct + '%"></span></span>');
+    }
+    if (cur.feature) {
+      parts.push('<span>now ' + escapeHtml(cur.feature) + ' &middot; ' + timeAgo(cur.mtime) + ' ago</span>');
+    }
+    if (cur.last_tool) {
+      parts.push('<span>last tool <span class="mono">' + escapeHtml(cur.last_tool) + '</span></span>');
+    }
+    return parts.length ? '<div class="session-footer">' + parts.join('') + '</div>' : '';
   }
 
   function sessionRunningCardHTML(s) {
     var badge = s.log == null ? '<span class="badge">WATCH</span>' : '<span class="badge">LOG</span>';
-    var currentHtml = s.current
-      ? escapeHtml(s.current.feature) + ' &middot; ' + timeAgo(s.current.mtime) + ' ago'
-      : 'no current_feature';
+    var currentFeature = s.current && s.current.feature;
     return '' +
-      '<article class="question-card" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
+      '<article class="question-card session-card-running" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
         '<div class="card-meta">' +
           '<span class="dot dot-green"></span>' +
           '<span class="card-project">' + escapeHtml(s.project) + '</span>' +
@@ -1117,31 +1244,32 @@
           '<span class="card-project">pid ' + escapeHtml(s.pid) + '</span>' +
           '<span class="card-age">' + escapeHtml(elapsedString(s.elapsed_seconds)) + '</span>' +
         '</div>' +
-        '<div class="session-tasks">' + tasksChipsHTML(s.tasks) + '</div>' +
-        '<div class="session-current">' + currentHtml + '</div>' +
+        '<div class="session-tasks">' + tasksChipsHTML(s.tasks, currentFeature) + '</div>' +
+        sessionProgressHTML(s) +
       '</article>';
   }
 
   function sessionFinishedRowHTML(s) {
-    var exitHtml = s.ended_by === 'report'
-      ? '<span class="badge">REPORT</span>'
-      : '<span' + (s.exit_code !== 0 ? ' class="text-danger"' : '') + '>exit ' + escapeHtml(s.exit_code) + '</span>';
-    var logHtml = s.log ? '<span class="mono">log: ' + escapeHtml(s.log) + '</span>' : '';
+    var outcome = sessionOutcome(s);
+    var rowClass = 'session-row' + ((outcome === 'killed' || outcome === 'ctrl_c') ? ' session-row--danger' : '');
+    var taskChip = s.tasks && s.tasks.length ? '<span class="task-chip">' + escapeHtml(compressFeatureIds(s.tasks)) + '</span>' : '';
     return '' +
-      '<div class="session-row" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
+      '<div class="' + rowClass + '" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
+        '<span>' + outcomeBadgeHTML(s) + '</span>' +
         '<span class="card-project">' + escapeHtml(s.project) + '</span>' +
-        tasksChipsHTML(s.tasks) +
-        exitHtml +
+        '<span>' + taskChip + tasksSubtextHTML(s) + '</span>' +
         '<span class="card-age">' + escapeHtml(elapsedString(s.duration_seconds)) + '</span>' +
-        logHtml +
+        '<span class="card-age">' + escapeHtml(timeAgo(s.finished_at)) + '</span>' +
+        '<span>' + sessionNextHTML(s) + '</span>' +
       '</div>';
   }
 
   function renderSessions() {
-    var sessions = state.data.sessions || { running: [], finished: [], finished_hidden: 0 };
+    var sessions = state.data.sessions || { running: [], finished: [], finished_hidden: 0, finished_counts: { report: 0, killed: 0 } };
     var running = sessions.running || [];
     var finished = sessions.finished || [];
     var hidden = sessions.finished_hidden || 0;
+    var counts = sessions.finished_counts || { report: 0, killed: 0 };
     var totalEmpty = running.length === 0 && finished.length === 0;
 
     sessionsEmptyEl.hidden = !totalEmpty;
@@ -1153,7 +1281,27 @@
 
     sessionsFinishedCountEl.textContent = finished.length;
     sessionsFinishedListEl.innerHTML = finished.map(sessionFinishedRowHTML).join('');
-    sessionsFinishedHiddenEl.textContent = hidden > 0 ? 'older hidden: ' + hidden : '';
+    sessionsFinishedHiddenEl.textContent =
+      counts.report + ' reported · ' + counts.killed + ' killed · older hidden: ' + hidden;
+  }
+
+  function onSessionsFinishedClick(e) {
+    var copyBtn = e.target.closest('[data-action="copy-resume"]');
+    if (copyBtn) { copyText('claude --resume ' + copyBtn.dataset.session, copyBtn); return; }
+    var logBtn = e.target.closest('[data-action="open-log"]');
+    if (logBtn) { copyText(logBtn.dataset.log, logBtn); return; }
+    var reportBtn = e.target.closest('[data-action="open-report"]');
+    if (reportBtn) {
+      state.view = 'inbox';
+      renderApp();
+      var reportCard = reportsListEl.querySelector('.report-card[data-id="' + CSS.escape(reportBtn.dataset.reportId) + '"]');
+      if (reportCard) {
+        var full = reportCard.querySelector('.report-full');
+        full.hidden = false;
+        reportCard.classList.add('expanded');
+        reportCard.scrollIntoView({ block: 'center' });
+      }
+    }
   }
 
   // ------------------------------------------------------------- events ----
@@ -1219,6 +1367,7 @@
     renderDismissedView();
   });
   dismissedListEl.addEventListener('click', onDismissedClick);
+  sessionsFinishedListEl.addEventListener('click', onSessionsFinishedClick);
 
   dispatchCheckboxEl.addEventListener('change', updateAnswersPanel);
   watchCheckboxEl.addEventListener('change', updateAnswersPanel);

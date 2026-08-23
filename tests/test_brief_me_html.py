@@ -412,6 +412,38 @@ def run_scenes(page, base_url, brief_home, fx):
     os.remove(os.path.join(brief_home, "sessions.json"))
     print("scene: Finished row ended_by=report shows REPORT badge - OK")
 
+    # ---- F20: Finished table outcome badges, killed styling, open-report link ----
+    with open(os.path.join(brief_home, "sessions.json"), "w", encoding="utf-8") as f:
+        json.dump({"running": [], "finished_hidden": 0,
+                   "finished_counts": {"report": 1, "killed": 2}, "finished": [
+            {"batch_id": "b3", "project": proj, "pid": 3, "started_at": "2026-08-22T03:00:00Z",
+             "finished_at": "2026-08-22T03:05:00Z", "duration_seconds": 300,
+             "exit_code": 4294967295, "ended_by": "exit", "tasks": ["F19", "F20"], "log": None,
+             "outcome": "killed", "report_id": None, "report_note": None},
+            {"batch_id": "b4", "project": proj, "pid": 4, "started_at": "2026-08-22T04:00:00Z",
+             "finished_at": "2026-08-22T04:05:00Z", "duration_seconds": 300,
+             "exit_code": None, "ended_by": "report", "tasks": [], "log": None,
+             "outcome": "report", "report_id": fx["r2"]["id"], "report_note": "waiting on review"}]}, f)
+    page.locator("#refresh-btn").click()
+    frows = page.locator("#sessions-finished-list .session-row")
+    expect(frows).to_have_count(2)
+    expect(frows.nth(0)).to_contain_text("KILLED")
+    expect(frows.nth(0)).to_contain_text("F19-F20")
+    expect(frows.nth(0)).to_contain_text("no report")
+    assert "session-row--danger" in (frows.nth(0).get_attribute("class") or ""), "killed row must get the danger row background class"
+    expect(frows.nth(1)).to_contain_text("REPORT")
+    expect(frows.nth(1)).to_contain_text("waiting on review")
+    expect(page.locator("#sessions-finished-hidden")).to_contain_text("1 reported")
+    expect(page.locator("#sessions-finished-hidden")).to_contain_text("2 killed")
+
+    frows.nth(1).locator('[data-action="open-report"]').click()
+    expect(page.locator("#inbox-view")).to_be_visible()
+    expect(page.locator("#sessions-view")).to_be_hidden()
+    r2_card_reopened = page.locator(f'.report-card[data-id="{fx["r2"]["id"]}"]')
+    expect(r2_card_reopened.locator(".report-full")).to_be_visible()
+    os.remove(os.path.join(brief_home, "sessions.json"))
+    print("scene: F20 Finished table outcome badges (KILLED/REPORT), row styling, open-report link - OK")
+
 
 if __name__ == "__main__":
     main()

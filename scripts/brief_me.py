@@ -272,9 +272,55 @@ def question_view(q):
     return v
 
 
+_REPORT_PART_SPLIT_RE = re.compile(r"[；;]")  # full-width or half-width semicolon
+_REPORT_FEATURE_ID_RE = re.compile(r"F(\d+)")
+_REPORT_STATUS_RE = re.compile(r"\b(passing|failing|blocked)\b", re.IGNORECASE)
+
+
+def _split_report_parts(summary):
+    """Split `summary` on up to two semicolons (full-width or half-width)
+    into (done, blocked, handoff); a missing trailing segment is None. No
+    semicolon at all means the report predates the three-part convention,
+    so all three come back None and callers keep showing raw `summary`."""
+    segments = [s.strip() for s in _REPORT_PART_SPLIT_RE.split(summary, maxsplit=2)]
+    if len(segments) == 1:
+        return None, None, None
+    segments += [None] * (3 - len(segments))
+    return tuple(segments[:3])
+
+
+def _compress_feature_ids(ids):
+    """[11, 12, 13, 15] -> "F11-F13 F15": consecutive runs collapse to a range."""
+    ranges = []
+    start = prev = ids[0]
+    for n in ids[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        ranges.append((start, prev))
+        start = prev = n
+    ranges.append((start, prev))
+    return " ".join(f"F{a}" if a == b else f"F{a}-F{b}" for a, b in ranges)
+
+
+def _feature_chip(done, summary):
+    """`F11-F15 passing`-style chip built from the done segment (or the
+    whole summary when there was no three-part split); None when either an
+    F-id or a terminal status keyword is missing."""
+    source = done or summary
+    ids = sorted(set(int(n) for n in _REPORT_FEATURE_ID_RE.findall(source)))
+    status = _REPORT_STATUS_RE.search(source)
+    if not ids or not status:
+        return None
+    return _compress_feature_ids(ids) + " " + status.group(1).lower()
+
+
 def report_view(r):
     v = {k: r.get(k) for k in ("id", "project", "summary", "severity", "session_id") if r.get(k) is not None}
     v["age"] = time_ago(r["created_at"])
+    done, blocked, handoff = _split_report_parts(r["summary"])
+    v["parts"] = {"done": done, "blocked": blocked, "handoff": handoff}
+    v["feature_chip"] = _feature_chip(done, r["summary"])
     return v
 
 

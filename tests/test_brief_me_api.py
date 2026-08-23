@@ -483,6 +483,29 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(fin["finished_at"], ts(started_at + timedelta(minutes=3)))
         self.assertEqual(fin["duration_seconds"], 180)
 
+    # -- F19: report_view() parts + feature_chip ------------------------
+    def test_report_view_three_part_summary_splits_into_parts_and_chip(self):
+        rid = self._add_report(
+            summary="F11 F12 F13 F14 F15 passing；stuck on OAuth client ID；see handoff.md"
+        )
+        _, state = self._get("/api/state")
+        report = state["unread_reports"]["demo"][0]
+        self.assertEqual(report["id"], rid)
+        self.assertEqual(report["parts"], {
+            "done": "F11 F12 F13 F14 F15 passing",
+            "blocked": "stuck on OAuth client ID",
+            "handoff": "see handoff.md",
+        })
+        self.assertEqual(report["feature_chip"], "F11-F15 passing")
+
+    def test_report_view_no_delimiter_gives_null_parts_and_chip(self):
+        rid = self._add_report(summary="Just a plain status update with no structure.")
+        _, state = self._get("/api/state")
+        report = state["unread_reports"]["demo"][0]
+        self.assertEqual(report["id"], rid)
+        self.assertEqual(report["parts"], {"done": None, "blocked": None, "handoff": None})
+        self.assertIsNone(report["feature_chip"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

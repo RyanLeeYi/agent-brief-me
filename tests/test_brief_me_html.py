@@ -26,8 +26,15 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _stub_api  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+import brief_me  # noqa: E402
 
 from playwright.sync_api import sync_playwright, expect  # noqa: E402
+
+# F19 added `parts`/`feature_chip` to the real report_view(); _stub_api's
+# minimal _r_view() predates that split/regex logic, so point it at the
+# real implementation instead of duplicating it here.
+_stub_api._r_view = brief_me.report_view
 
 PROJECT = "demo-project"
 
@@ -411,6 +418,41 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(rows.nth(1)).to_contain_text("exit 0")
     os.remove(os.path.join(brief_home, "sessions.json"))
     print("scene: Finished row ended_by=report shows REPORT badge - OK")
+
+    # ---- F19: report card three-part summary -> Done/Blocked/Handoff + feature chip ----
+    # the F14/F15 scenes above leave state.view === 'sessions'; a report card
+    # is only (re)rendered while viewing the inbox, so switch back first.
+    page.locator('.side-item[data-project="__all__"]').click()
+    expect(page.locator("#inbox-view")).to_be_visible()
+
+    r3 = make_report(
+        PROJECT,
+        "F30 F31 F32 passing；waiting on review approval；docs/handoff/F30.md",
+    )
+    append_line(os.path.join(brief_home, "inbox.jsonl"), r3)
+    page.locator("#refresh-btn").click()
+    expect(page.locator(".report-card")).to_have_count(2)
+    r3_card = page.locator(f'.report-card[data-id="{r3["id"]}"]')
+    expect(r3_card.locator(".feature-chip")).to_have_text("F30-F32 passing")
+    expect(r3_card.locator(".feature-chip")).to_have_class("feature-chip feature-chip-passing")
+    expect(r3_card.locator(".report-summary-first-line")).to_have_text("waiting on review approval")
+    r3_card.locator('[data-action="toggle-report"]').click()
+    labels = r3_card.locator(".report-part-label")
+    expect(labels).to_have_text(["Done", "Blocked", "Handoff"])
+    expect(r3_card.locator(".report-part-label-blocked")).to_have_text("Blocked")
+    expect(r3_card.locator(".report-parts")).to_contain_text("F30 F31 F32 passing")
+    expect(r3_card.locator(".report-parts")).to_contain_text("waiting on review approval")
+    expect(r3_card.locator(".report-parts")).to_contain_text("docs/handoff/F30.md")
+    print("scene: report card shows Done/Blocked/Handoff parts and feature chip - OK")
+
+    # a report with no semicolon falls back to the plain summary paragraph and a grey chip
+    r2_card = page.locator(f'.report-card[data-id="{fx["r2"]["id"]}"]')
+    expect(r2_card.locator(".feature-chip")).to_have_text("no change")
+    expect(r2_card.locator(".feature-chip")).to_have_class("feature-chip feature-chip-none")
+    r2_card.locator('[data-action="toggle-report"]').click()
+    expect(r2_card.locator(".report-full p")).to_have_text(fx["r2"]["summary"])
+    expect(r2_card.locator(".report-parts")).to_have_count(0)
+    print("scene: report card without a three-part summary falls back to plain summary - OK")
 
 
 if __name__ == "__main__":

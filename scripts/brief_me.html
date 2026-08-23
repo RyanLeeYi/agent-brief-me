@@ -219,11 +219,26 @@
     display:flex; align-items:center; gap:10px; width:100%; min-height:44px;
     padding:10px 16px; cursor:pointer; text-align:left;
   }
+  .report-card .card-project{
+    width:150px; flex:0 0 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .feature-chip{
+    font-size:11px; font-weight:600; flex:0 0 auto; white-space:nowrap;
+    padding:2px 8px; border-radius:12px; border:1px solid var(--border-strong);
+    color:var(--text-secondary);
+  }
+  .feature-chip-none{ color:var(--text-muted); }
+  .feature-chip-passing{ background:var(--accent-bg); color:var(--accent); border-color:var(--accent); }
+  .feature-chip-blocked{ color:var(--warning); border-color:var(--warning); }
   .report-summary-first-line{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .mark-read{ margin-top:8px; }
   .report-card .chevron{ transition:transform var(--transition); }
   .report-card.expanded .chevron{ transform:rotate(180deg); }
   .report-full{ padding:0 16px 16px; color:var(--text-secondary); white-space:pre-wrap; }
+  .report-parts{ display:grid; grid-template-columns:72px 1fr; row-gap:8px; column-gap:12px; margin-bottom:12px; }
+  .report-part-label{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-muted); }
+  .report-part-label-blocked{ color:var(--warning); }
+  .report-actions{ display:flex; align-items:center; gap:12px; margin-top:8px; }
+  .report-actions .mark-read{ margin-left:auto; }
 
   /* ---------- dismissed view ---------- */
   .dismissed-filters{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }
@@ -989,24 +1004,47 @@
     reportsListEl.innerHTML = items.map(function (e) { return reportCardHTML(e.report, e.project); }).join('');
   }
 
+  function featureChipHTML(chip) {
+    if (!chip) return '<span class="feature-chip feature-chip-none">no change</span>';
+    var status = chip.split(' ').pop();
+    var cls = status === 'passing' ? ' feature-chip-passing' : (status === 'blocked' ? ' feature-chip-blocked' : '');
+    return '<span class="feature-chip' + cls + '">' + escapeHtml(chip) + '</span>';
+  }
+
+  function reportPartsHTML(parts, summary) {
+    if (!parts || (parts.done == null && parts.blocked == null && parts.handoff == null)) {
+      return '<p>' + escapeHtml(summary) + '</p>';
+    }
+    return '<div class="report-parts">' +
+      '<span class="report-part-label">Done</span><span>' + escapeHtml(parts.done || '') + '</span>' +
+      '<span class="report-part-label report-part-label-blocked">Blocked</span><span>' + escapeHtml(parts.blocked || '') + '</span>' +
+      '<span class="report-part-label">Handoff</span><span>' + escapeHtml(parts.handoff || '') + '</span>' +
+    '</div>';
+  }
+
   function reportCardHTML(report, project) {
     var isRead = !!state.reportsReadLocally[report.id];
     var resumeHtml = report.session_id
       ? '<button type="button" class="resume-cmd" data-action="copy-resume" data-session="' + escapeHtml(report.session_id) + '" title="Click to copy">claude --resume ' + escapeHtml(report.session_id) + '</button>'
       : '';
+    var parts = report.parts || null;
+    var blockedLine = parts && parts.blocked != null ? parts.blocked : report.summary;
     return '' +
       '<article class="report-card" data-id="' + escapeHtml(report.id) + '">' +
         '<button type="button" class="report-summary-row" data-action="toggle-report">' +
           '<span class="dot ' + (isRead ? 'dot-hidden' : 'dot-green') + '"></span>' +
           '<span class="card-project">' + escapeHtml(project) + '</span>' +
-          '<span class="report-summary-first-line">' + escapeHtml(firstLine(report.summary)) + '</span>' +
+          featureChipHTML(report.feature_chip) +
+          '<span class="report-summary-first-line">' + escapeHtml(firstLine(blockedLine)) + '</span>' +
           '<span class="card-age">' + escapeHtml(report.age || '') + '</span>' +
           '<svg class="chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 3l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>' +
         '</button>' +
         '<div class="report-full" hidden>' +
-          '<p>' + escapeHtml(report.summary) + '</p>' +
-          resumeHtml +
-          '<button type="button" class="mark-read" data-action="mark-read"' + (isRead ? ' disabled>Read' : '>Mark read') + '</button>' +
+          reportPartsHTML(parts, report.summary) +
+          '<div class="report-actions">' +
+            resumeHtml +
+            '<button type="button" class="mark-read" data-action="mark-read"' + (isRead ? ' disabled>Read' : '>Mark read') + '</button>' +
+          '</div>' +
         '</div>' +
       '</article>';
   }

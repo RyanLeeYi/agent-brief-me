@@ -516,7 +516,13 @@ SESSION_WINDOW_SECONDS = 7 * 24 * 3600  # F14: hide `finished` sessions older th
 def _project_current(path):
     """`current` for a running session (F14): {"feature": <content>, "mtime":
     <ISO UTC>} from <path>/.harness/current_feature, or None if the project
-    path is unknown or the file doesn't exist."""
+    path is unknown or the file doesn't exist.
+
+    F20 adds two more best-effort fields, each omitted (not None/0) when its
+    source is unavailable so the caller can tell "no signal" apart from
+    "zero": `passing`/`total` (feature counts from <path>/feature_list.json,
+    for the sessions progress bar) and `last_tool` (the last tool name in
+    <path>/.harness/trace.jsonl, for the sessions "last tool" line)."""
     if not path:
         return None
     cf_path = os.path.join(path, ".harness", "current_feature")
@@ -526,7 +532,27 @@ def _project_current(path):
         mtime = datetime.fromtimestamp(os.path.getmtime(cf_path), tz=timezone.utc)
     except OSError:
         return None
-    return {"feature": content, "mtime": mtime.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    result = {"feature": content, "mtime": mtime.strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+    try:
+        with open(os.path.join(path, "feature_list.json"), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        features = data.get("features", []) if isinstance(data, dict) else []
+        result["total"] = len(features)
+        result["passing"] = sum(1 for feat in features if isinstance(feat, dict) and feat.get("status") == "passing")
+    except (OSError, ValueError):
+        pass
+
+    last_tool = None
+    for line in iter_lines(os.path.join(path, ".harness", "trace.jsonl")):
+        try:
+            last_tool = json.loads(line).get("tool") or last_tool
+        except ValueError:
+            continue
+    if last_tool:
+        result["last_tool"] = last_tool
+
+    return result
 
 
 def _load_batches(path):
@@ -550,14 +576,80 @@ def _load_batches(path):
     return batches
 
 
+_BLOCKED_SPLIT_RE = re.compile(r"[;；]")  # ";" or full-width "；"
+
+
+def _report_note(summary):
+    """F20's Tasks-column subtext for a finished row with a linked report:
+    the "blocked" middle segment of a three-part report summary (id/state;
+    blocked reason; handoff path - see agents.md's report convention), or
+    the summary's first line when it isn't three parts.
+
+    Deliberately re-splits the raw summary here rather than depending on
+    report_view()'s (still in-flight, different-owner) `parts` field."""
+    parts = _BLOCKED_SPLIT_RE.split(summary or "", maxsplit=2)
+    if len(parts) >= 2 and parts[1].strip():
+        return parts[1].strip()
+    return (summary or "").split("\n", 1)[0]
+
+
+def _reports_with_ids(inbox_path):
+    """{project: [(created_at, id, summary), ...]} for every report in the
+    inbox (F20) - like _report_times(), but also keeping id/summary so a
+    finished session row can link to (and preview) the report that likely
+    explains it. Kept separate from _report_times() since that function is
+    also used by running_sessions(), outside this feature's ownership."""
+    out = {}
+    for line in iter_lines(inbox_path):
+        try:
+            rec = json.loads(line)
+            if rec.get("type") != "report":
+                continue
+            out.setdefault(rec.get("project"), []).append(
+                (_parse_utc(rec["created_at"]), rec.get("id"), rec.get("summary")))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def _nearest_report(reports_with_id, project, anchor):
+    """(id, summary) of the earliest report for `project` at/after `anchor`,
+    or (None, None). Mirrors _report_ended_at()'s earliest-at-or-after
+    selection, so a session ended_by="report" always links to the exact
+    report that ended it (same anchor, same tie-break)."""
+    later = sorted(t for t in reports_with_id.get(project, []) if t[0] >= anchor)
+    return (later[0][1], later[0][2]) if later else (None, None)
+
+
+def _finished_outcome(ended_by, exit_code):
+    """F20 outcome classification for a finished session row: legible labels
+    instead of a raw platform exit code (4294967295/-1 for a killed
+    process, 3221225786 for Ctrl-C - both meaningless at a glance)."""
+    if ended_by == "report":
+        return "report"
+    if exit_code is None:
+        return "unknown"
+    if exit_code in (4294967295, -1):
+        return "killed"
+    if exit_code == 3221225786:
+        return "ctrl_c"
+    return "ok" if exit_code == 0 else "exit"
+
+
 def sessions_view(path, projects_by_path, reports=None):
     """GET /api/state's `sessions` field (F14): {running: [...], finished:
-    [...], finished_hidden: N} (N = batches whose finished_at is older than
-    SESSION_WINDOW_SECONDS). `running` uses the same alive-batch condition as
-    running_sessions(); `finished` is sorted newest-first. A `started` record
-    with no `tasks` key (written before this field existed) folds to []."""
+    [...], finished_hidden: N, finished_counts: {report, killed}} (N =
+    batches whose finished_at is older than SESSION_WINDOW_SECONDS;
+    finished_counts is a tally of `finished`'s outcome field, F20, with
+    "killed" including "ctrl_c"). `running` uses the same alive-batch
+    condition as running_sessions(); `finished` is sorted newest-first. A
+    `started` record with no `tasks` key (written before this field existed)
+    folds to []. Each `finished` row also carries F20's `outcome` and
+    `report_id` (the report, if any, that most likely explains it - see
+    _nearest_report())."""
     now = datetime.now(timezone.utc)
     reports = reports or {}
+    reports_with_id = _reports_with_ids(os.path.join(os.path.dirname(path), "inbox.jsonl"))
     running, finished, hidden = [], [], 0
     for batch_id, batch in _load_batches(path).items():
         fin = batch["finished"]
@@ -575,6 +667,7 @@ def sessions_view(path, projects_by_path, reports=None):
                     if (now - ended).total_seconds() > SESSION_WINDOW_SECONDS:
                         hidden += 1
                         continue
+                    report_id, report_summary = _nearest_report(reports_with_id, rec.get("project"), t0)
                     finished.append({
                         "batch_id": batch_id, "project": rec.get("project"), "pid": pid,
                         "started_at": rec["started_at"],
@@ -582,6 +675,8 @@ def sessions_view(path, projects_by_path, reports=None):
                         "duration_seconds": int((ended - t0).total_seconds()),
                         "exit_code": None, "ended_by": "report",
                         "tasks": rec.get("tasks", []), "log": rec.get("log"),
+                        "outcome": "report", "report_id": report_id,
+                        "report_note": _report_note(report_summary) if report_id else None,
                     })
                     continue
                 running.append({
@@ -607,16 +702,27 @@ def sessions_view(path, projects_by_path, reports=None):
                 duration = int((finished_at - t0).total_seconds())
             except (KeyError, ValueError):
                 duration = None
+            exit_code = exit_codes[i] if i < len(exit_codes) else None
+            report_id, report_summary = _nearest_report(reports_with_id, rec.get("project"), finished_at)
             finished.append({
                 "batch_id": batch_id, "project": rec.get("project"), "pid": rec.get("pid"),
                 "started_at": rec.get("started_at"), "finished_at": fin["finished_at"],
                 "duration_seconds": duration,
-                "exit_code": exit_codes[i] if i < len(exit_codes) else None,
+                "exit_code": exit_code,
                 "ended_by": "exit",
                 "tasks": rec.get("tasks", []), "log": rec.get("log"),
+                "outcome": _finished_outcome("exit", exit_code), "report_id": report_id,
+                "report_note": _report_note(report_summary) if report_id else None,
             })
     finished.sort(key=lambda s: s["finished_at"], reverse=True)
-    return {"running": running, "finished": finished, "finished_hidden": hidden}
+    finished_counts = {"report": 0, "killed": 0}
+    for row in finished:
+        if row["outcome"] == "report":
+            finished_counts["report"] += 1
+        elif row["outcome"] in ("killed", "ctrl_c"):
+            finished_counts["killed"] += 1
+    return {"running": running, "finished": finished, "finished_hidden": hidden,
+            "finished_counts": finished_counts}
 
 
 def _run_dispatch(brief_home, projects, watch):

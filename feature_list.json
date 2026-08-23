@@ -2,5 +2,25 @@
   "project": "agent-brief-me",
   "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
   "archive": "docs/archive/features.jsonl",
-  "features": []
+  "features": [
+    {
+      "id": "F23",
+      "name": "Sessions 的 tasks 固定格式：派工時正規化為 {feature, kind, title}，UI 以「Fxx · 類型」一行一個顯示",
+      "status": "failing",
+      "touches": [
+        "scripts/dispatch.py",
+        "scripts/brief_me.html",
+        "tests/test_dispatch_batch.py",
+        "tests/test_brief_me_api.py",
+        "tests/test_brief_me_html.py"
+      ],
+      "acceptance": [
+        "共用契約（兩端都照這個，brief_me.py 原樣透傳不改）：`started` 記錄的 `tasks` 元素由字串改為物件 `{\"feature\": \"F13\"|null, \"kind\": \"sign-off\"|\"dispatch\"|\"question\", \"title\": \"<原標題>\"}`。`kind` 由標題前綴判定：`[sign-off]`→sign-off、`[dispatch]`→dispatch、其餘→question。`feature` 取標題中第一個 `([A-Z]+[0-9]+)`（第一個英文字母串接數字的 token）（去掉前綴與專案名之後），沒有就 null。",
+        "dispatch.py `tasks_for`：回傳上述物件列表，順序同 prompt；同一 `(feature, kind)` 且 feature 非 null 者去重只留第一個。tests/test_dispatch_batch.py 新增：三種前綴各一、去重、無 feature 的標題 → 斷言完整物件。",
+        "brief_me.html：新增 `taskLabel(t)`——t 為字串（legacy）回傳原字串；物件則 feature 非 null 回 `F13 · 簽核`／`F13 · 派工`／`F13 · 問題`（kind 對應中文固定：sign-off→簽核、dispatch→派工、question→問題），feature 為 null 回 `title`。Running 卡片的 chip 與 Finished 列的 tasks 都改用 `taskLabel`，Finished 列一行一個 task（不再用 `compressFeatureIds` 的 `+N`；`compressFeatureIds` 刪除），`task-chip--current` 的比對改用 `t.feature`。",
+        "tests/test_brief_me_html.py：sessions fixture 改成物件格式並加一筆 legacy 字串；斷言 Finished 列出現 `F19 · 簽核` 與 legacy 原字串、Running chip 的 current 高亮仍對 `t.feature` 生效。tests/test_brief_me_api.py 既有 tasks 斷言改為物件格式，legacy 字串記錄仍不 500。",
+        "`python -m unittest discover tests`（3.13）與 `py -3.13 tests/test_brief_me_html.py` 全綠。"
+      ]
+    }
+  ]
 }

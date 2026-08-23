@@ -488,6 +488,41 @@ def run_scenes(page, base_url, brief_home, fx):
     os.remove(os.path.join(brief_home, "sessions.json"))
     print("scene: F20 Finished table outcome badges (KILLED/REPORT), row styling, open-report link - OK")
 
+    # ---- F21: mobile layout (390px) - sessions table + report card don't overflow ----
+    original_viewport = page.viewport_size
+    with open(os.path.join(brief_home, "sessions.json"), "w", encoding="utf-8") as f:
+        json.dump({"running": [], "finished_hidden": 0,
+                   "finished_counts": {"report": 1, "killed": 2}, "finished": [
+            {"batch_id": "b3", "project": proj, "pid": 3, "started_at": "2026-08-22T03:00:00Z",
+             "finished_at": "2026-08-22T03:05:00Z", "duration_seconds": 300,
+             "exit_code": 4294967295, "ended_by": "exit", "tasks": ["F19", "F20"], "log": None,
+             "outcome": "killed", "report_id": None, "report_note": None},
+            {"batch_id": "b4", "project": proj, "pid": 4, "started_at": "2026-08-22T04:00:00Z",
+             "finished_at": "2026-08-22T04:05:00Z", "duration_seconds": 300,
+             "exit_code": None, "ended_by": "report", "tasks": [], "log": None,
+             "outcome": "report", "report_id": fx["r2"]["id"], "report_note": "waiting on review"}]}, f)
+    page.locator("#refresh-btn").click()
+    page.set_viewport_size({"width": 390, "height": 844})
+
+    # sidebar is an off-canvas drawer at this width; open it to reach the nav
+    # buttons it contains, same as a real mobile user would.
+    page.locator("#sidebar-toggle").click()
+    page.locator("#sessions-entry").click()
+    expect(page.locator("#sessions-view")).to_be_visible()
+    expect(page.locator("#sessions-finished-list .session-row")).to_have_count(2)
+    sessions_width = page.evaluate("document.documentElement.scrollWidth")
+    assert sessions_width <= 390, f"sessions view overflows at 390px: scrollWidth={sessions_width}"
+
+    page.locator("#sidebar-toggle").click()
+    page.locator('.side-item[data-project="__all__"]').click()
+    expect(page.locator("#inbox-view")).to_be_visible()
+    inbox_width = page.evaluate("document.documentElement.scrollWidth")
+    assert inbox_width <= 390, f"inbox view overflows at 390px: scrollWidth={inbox_width}"
+
+    page.set_viewport_size(original_viewport)
+    os.remove(os.path.join(brief_home, "sessions.json"))
+    print("scene: mobile layout (390px) - sessions table and report card fit without horizontal overflow - OK")
+
 
 if __name__ == "__main__":
     main()

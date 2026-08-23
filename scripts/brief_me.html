@@ -307,6 +307,49 @@
   #confirm-dialog h2{ margin-top:0; font-size:16px; }
   #confirm-list{ margin:12px 0; padding-left:20px; color:var(--text-secondary); }
   .confirm-actions{ display:flex; justify-content:flex-end; gap:12px; margin-top:16px; }
+
+  /* ---------- mobile: sessions table + report card (F21) ----------
+     Placed after the unconditional .session-row/.report-card rules above
+     (not appended to the early @media block near the top of this file):
+     that earlier block has the same specificity as the unconditional
+     rules defined later in this stylesheet, so on a tie the later,
+     unconditional rule wins regardless of the media query. Putting these
+     overrides last guarantees they win at <=768px. */
+  @media (max-width: 768px){
+    .session-table-head{ display:none; }
+    .session-row{
+      grid-template-columns:auto 1fr;
+      grid-auto-columns:minmax(0, auto);
+      row-gap:2px;
+      overflow:hidden;
+    }
+    .session-row > *{ min-width:0; }
+    .session-row .cell-outcome{ grid-column:1; grid-row:1 / -1; align-self:start; }
+    .session-row .cell-project{ grid-column:2; grid-row:1; }
+    .session-row .cell-tasks{ grid-column:2; grid-row:2; }
+    .session-row .cell-took{ grid-column:2; grid-row:3; }
+    .session-row .cell-ended{ grid-column:3; grid-row:3; }
+    .session-row .cell-next{ grid-column:4; grid-row:3; }
+    .session-row .cell-took, .session-row .cell-ended, .session-row .cell-next{
+      font-size:12px; color:var(--text-muted);
+      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+
+    .report-card .card-project{ width:auto; max-width:40%; }
+    .report-summary-row{ flex-wrap:wrap; }
+    /* force the chip + first-line onto their own second line: give the
+       line-1 items an explicit order, then break with a zero-size
+       pseudo-element (flex-basis:100%) rather than putting that basis on
+       the chip itself, which would strand it alone on its own line and
+       push the first-line text to a third line. */
+    .report-summary-row .dot{ order:1; }
+    .report-summary-row .card-project{ order:2; }
+    .report-summary-row .card-age{ order:3; }
+    .report-summary-row::after{ content:""; order:4; flex-basis:100%; }
+    .report-summary-row .feature-chip{ order:5; }
+    .report-summary-row .report-summary-first-line{ order:6; }
+    .report-summary-row .chevron{ order:7; }
+  }
 </style>
 </head>
 <body>
@@ -1293,12 +1336,12 @@
     var taskChip = s.tasks && s.tasks.length ? '<span class="task-chip">' + escapeHtml(compressFeatureIds(s.tasks)) + '</span>' : '';
     return '' +
       '<div class="' + rowClass + '" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
-        '<span>' + outcomeBadgeHTML(s) + '</span>' +
-        '<span class="card-project">' + escapeHtml(s.project) + '</span>' +
-        '<span>' + taskChip + tasksSubtextHTML(s) + '</span>' +
-        '<span class="card-age">' + escapeHtml(elapsedString(s.duration_seconds)) + '</span>' +
-        '<span class="card-age">' + escapeHtml(timeAgo(s.finished_at)) + '</span>' +
-        '<span>' + sessionNextHTML(s) + '</span>' +
+        '<span class="cell-outcome">' + outcomeBadgeHTML(s) + '</span>' +
+        '<span class="card-project cell-project">' + escapeHtml(s.project) + '</span>' +
+        '<span class="cell-tasks">' + taskChip + tasksSubtextHTML(s) + '</span>' +
+        '<span class="card-age cell-took">' + escapeHtml(elapsedString(s.duration_seconds)) + '</span>' +
+        '<span class="card-age cell-ended">' + escapeHtml(timeAgo(s.finished_at)) + '</span>' +
+        '<span class="cell-next">' + sessionNextHTML(s) + '</span>' +
       '</div>';
   }
 

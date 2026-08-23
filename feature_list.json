@@ -6,7 +6,7 @@
     {
       "id": "F21",
       "name": "手機版面：sessions 表格與 report 卡片在 390px 不跑版",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "touches": [
         "scripts/brief_me.html",
@@ -19,7 +19,9 @@
         "tests/test_brief_me_html.py 新增 scene：`page.set_viewport_size(390x844)` 載入 F20 fixture，斷言第 3 條，並在 scene 結束把 viewport 還原。",
         "色值／字型只用既有變數；既有 15 scene 全綠。"
       ],
-      "evidence": []
+      "evidence": [
+        "acceptance-verifier 2026-08-23: 5/5 pass (HEAD 0ab9af8); 16/16 Playwright scenes"
+      ]
     }
   ]
 }

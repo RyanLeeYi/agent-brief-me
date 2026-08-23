@@ -1201,35 +1201,21 @@
   }
 
   // ------------------------------------------------------------ sessions ----
-  function tasksChipsHTML(tasks, currentFeature) {
-    return (tasks || []).map(function (t) {
-      var cls = 'task-chip' + (currentFeature && t === currentFeature ? ' task-chip--current' : '');
-      return '<span class="' + cls + '">' + escapeHtml(t) + '</span>';
-    }).join('');
+  // F23: a `tasks` entry is either a legacy plain string, or (R1) an object
+  // {feature, kind, title} written by dispatch.py. taskLabel renders both.
+  var TASK_KIND_LABEL = { 'sign-off': '簽核', 'dispatch': '派工', 'question': '問題' };
+  function taskLabel(t) {
+    if (typeof t === 'string') return t;
+    if (t.feature) return t.feature + ' · ' + (TASK_KIND_LABEL[t.kind] || t.kind);
+    return t.title;
   }
 
-  // F20's Tasks-column chip: consecutive same-prefix feature ids compress
-  // into a range ("F19-F21"); more than 3 collapses to a bare count so the
-  // column never explodes for a big batch.
-  var FEATURE_ID_RE = /^([A-Za-z]+)(\d+)$/;
-  function compressFeatureIds(tasks) {
-    tasks = tasks || [];
-    if (!tasks.length) return '';
-    if (tasks.length > 3) return '+' + tasks.length;
-    var segments = [], i = 0;
-    while (i < tasks.length) {
-      var m = FEATURE_ID_RE.exec(tasks[i]);
-      if (!m) { segments.push(tasks[i]); i++; continue; }
-      var prefix = m[1], start = parseInt(m[2], 10), end = start, j = i + 1;
-      for (; j < tasks.length; j++) {
-        var m2 = FEATURE_ID_RE.exec(tasks[j]);
-        if (!m2 || m2[1] !== prefix || parseInt(m2[2], 10) !== end + 1) break;
-        end++;
-      }
-      segments.push(end > start ? prefix + start + '-' + prefix + end : prefix + start);
-      i = j;
-    }
-    return segments.join(',');
+  function tasksChipsHTML(tasks, currentFeature) {
+    return (tasks || []).map(function (t) {
+      var isCurrent = typeof t === 'string' ? t === currentFeature : t.feature === currentFeature;
+      var cls = 'task-chip' + (currentFeature && isCurrent ? ' task-chip--current' : '');
+      return '<span class="' + cls + '">' + escapeHtml(taskLabel(t)) + '</span>';
+    }).join('');
   }
 
   // Backward compat: a sessions.json written before F20 (or by any other
@@ -1337,12 +1323,14 @@
   function sessionFinishedRowHTML(s) {
     var outcome = sessionOutcome(s);
     var rowClass = 'session-row' + ((outcome === 'killed' || outcome === 'ctrl_c') ? ' session-row--danger' : '');
-    var taskChip = s.tasks && s.tasks.length ? '<span class="task-chip">' + escapeHtml(compressFeatureIds(s.tasks)) + '</span>' : '';
+    var taskChips = (s.tasks || []).map(function (t) {
+      return '<span class="task-chip">' + escapeHtml(taskLabel(t)) + '</span>';
+    }).join('');
     return '' +
       '<div class="' + rowClass + '" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
         '<span class="cell-outcome">' + outcomeBadgeHTML(s) + '</span>' +
         '<span class="card-project cell-project">' + escapeHtml(s.project) + '</span>' +
-        '<span class="cell-tasks">' + taskChip + tasksSubtextHTML(s) + '</span>' +
+        '<span class="cell-tasks">' + taskChips + tasksSubtextHTML(s) + '</span>' +
         '<span class="card-age cell-took">' + escapeHtml(elapsedString(s.duration_seconds)) + '</span>' +
         '<span class="card-age cell-ended">' + escapeHtml(timeAgo(s.finished_at)) + '</span>' +
         '<span class="cell-next">' + sessionNextHTML(s) + '</span>' +

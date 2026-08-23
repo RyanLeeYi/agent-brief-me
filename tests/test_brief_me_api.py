@@ -388,9 +388,13 @@ class BriefMeAPITestCase(unittest.TestCase):
             batch_old = str(uuid.uuid4())     # finished 10 days ago: hidden
 
             records = [
+                # F23/R1: a started record's tasks are objects; a legacy plain
+                # string may still appear alongside them and must not 500.
                 {"type": "started", "batch_id": batch_running, "project": "demo",
                  "pid": os.getpid(), "started_at": ts(now - timedelta(minutes=5)),
-                 "log": "/tmp/demo.log", "tasks": ["Pick a datastore"]},
+                 "log": "/tmp/demo.log",
+                 "tasks": [{"feature": None, "kind": "question", "title": "Pick a datastore"},
+                           "Legacy plain string task"]},
                 # legacy started record with no "tasks" key - must not 500
                 {"type": "started", "batch_id": batch_recent, "project": "demo",
                  "pid": 999001, "started_at": ts(now - timedelta(days=3, minutes=5)),
@@ -419,7 +423,8 @@ class BriefMeAPITestCase(unittest.TestCase):
             self.assertEqual(run["batch_id"], batch_running)
             self.assertEqual(run["project"], "demo")
             self.assertEqual(run["pid"], os.getpid())
-            self.assertEqual(run["tasks"], ["Pick a datastore"])
+            self.assertEqual(run["tasks"], [{"feature": None, "kind": "question", "title": "Pick a datastore"},
+                                             "Legacy plain string task"])
             self.assertEqual(run["log"], "/tmp/demo.log")
             self.assertIsNone(run["current"])
 

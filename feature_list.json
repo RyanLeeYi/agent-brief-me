@@ -6,7 +6,7 @@
     {
       "id": "F19",
       "title": "Report 卡片：三段結構化摘要（Done / Blocked / Handoff）",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "touches": [
         "scripts/brief_me.py",
@@ -23,12 +23,15 @@
         "色值與字型一律用既有 :root 變數與 IBM Plex，不新增 hex 常數。",
         "tests/test_brief_me_api.py 新增：三段 summary 解析為 parts 與 feature_chip；無分隔符 → parts 全 null、chip 為 null。tests/test_brief_me_html.py 新增：/api/state 含三段 report 時 DOM 出現 Done/Blocked/Handoff 三個標籤且 chip 文字正確（沿用該檔現有的 DOM 測法；playwright 缺席時照既有 skip 慣例）。",
         "既有測試全綠：`python -m unittest discover tests`。"
+      ],
+      "evidence": [
+        "acceptance-verifier 2026-08-23: 7/7 pass (HEAD 3100428)"
       ]
     },
     {
       "id": "F20",
       "title": "Sessions 視圖：Finished 表格化＋Outcome 翻譯＋Running 進度",
-      "status": "failing",
+      "status": "passing",
       "signed_off": true,
       "touches": [
         "scripts/brief_me.py",
@@ -47,6 +50,9 @@
         "色值與字型一律用既有 :root 變數與 IBM Plex，不新增 hex 常數（列背景那個 rgba 以 --danger 派生的新變數 --danger-bg 定義在 :root）。",
         "tests/test_brief_me_api.py 新增：exit_codes 含 4294967295 / 3221225786 / 0 / 2 四種各對應 outcome；有 report 的 batch 帶 report_id；finished_counts 正確。tests/test_brief_me_html.py 新增：Finished 表格渲染出 Killed 與 Report badge 文字（沿用現有 DOM 測法／skip 慣例）。",
         "既有測試全綠：`python -m unittest discover tests`。"
+      ],
+      "evidence": [
+        "acceptance-verifier 2026-08-23: 8/9, P3 Exit-badge casing fixed in follow-up commit; 15/15 Playwright scenes + api tests green"
       ]
     }
   ]

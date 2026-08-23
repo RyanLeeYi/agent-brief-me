@@ -216,12 +216,15 @@ headless (`-p`) dispatches never touch claude.json. Two shapes, discriminated
 by `type`:
 
 ```json
-{"type": "started", "batch_id": "<uuid4 shared by one dispatch.py run>", "project": "my-project", "pid": 12345, "started_at": "2026-08-22T01:02:03Z", "log": "/path/to/logs/my-project-<hex>.log", "tasks": ["Which datastore for the inbox?"]}
+{"type": "started", "batch_id": "<uuid4 shared by one dispatch.py run>", "project": "my-project", "pid": 12345, "started_at": "2026-08-22T01:02:03Z", "log": "/path/to/logs/my-project-<hex>.log", "tasks": [{"feature": "F13", "kind": "sign-off", "title": "[sign-off] my-project F13: ..."}, {"feature": null, "kind": "question", "title": "Which datastore for the inbox?"}]}
 {"type": "finished", "batch_id": "<same uuid4>", "finished_at": "2026-08-22T01:20:00Z", "exit_codes": [0, 0]}
 ```
 
-`log` is `null` for `--watch` windows. `tasks` is the question `title` of
-every unconsumed answer this dispatch consumed for that project, in the same
+`log` is `null` for `--watch` windows. `tasks` holds one `{feature, kind, title}` object per unconsumed answer this
+dispatch consumed for that project (`kind` from the title prefix: `[sign-off]`,
+`[dispatch]`, else `question`; `feature` is the first `[A-Z]+[0-9]+` token after
+the prefix and project name, or `null`; same `(feature, kind)` deduped; records
+written before F23 hold plain title strings), in the same
 order as the prompt (empty array if none). Records written before this field
 existed have no `tasks` key; readers must treat a missing `tasks` as `[]`,
 never error on it.

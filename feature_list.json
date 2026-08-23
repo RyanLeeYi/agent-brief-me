@@ -6,7 +6,7 @@
     {
       "id": "F22",
       "name": "手機版 Sessions Finished 列改堆疊卡片，任務全文可讀、觸控目標 44px",
-      "status": "failing",
+      "status": "passing",
       "supersedes_layout_of": "F21",
       "touches": [
         "scripts/brief_me.html",
@@ -20,7 +20,10 @@
         "390px 寬度下 sessions 與 inbox 兩個 view `scrollWidth <= 390`；tests/test_brief_me_html.py 既有 390px scene 額外斷言：Finished 第一列的 `.cell-tasks` 寬度 >= 300px、`.cell-next button` 高度 >= 44px。",
         "桌機（>768px）版面不變；既有 Playwright scene 全綠。"
       ],
-      "signed_off": true
+      "signed_off": true,
+      "evidence": [
+        "acceptance-verifier 2026-08-23: 6/6 pass (HEAD a4e4c63); 16/16 Playwright scenes"
+      ]
     }
   ]
 }

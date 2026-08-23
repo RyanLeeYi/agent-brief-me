@@ -317,23 +317,27 @@
      overrides last guarantees they win at <=768px. */
   @media (max-width: 768px){
     .session-table-head{ display:none; }
+    /* stacked card: [badge project ..... took / ended] / tasks / next */
     .session-row{
-      grid-template-columns:auto 1fr;
-      grid-auto-columns:minmax(0, auto);
-      row-gap:2px;
-      overflow:hidden;
+      display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;
+      padding:12px 0;
     }
     .session-row > *{ min-width:0; }
-    .session-row .cell-outcome{ grid-column:1; grid-row:1 / -1; align-self:start; }
-    .session-row .cell-project{ grid-column:2; grid-row:1; }
-    .session-row .cell-tasks{ grid-column:2; grid-row:2; }
-    .session-row .cell-took{ grid-column:2; grid-row:3; }
-    .session-row .cell-ended{ grid-column:3; grid-row:3; }
-    .session-row .cell-next{ grid-column:4; grid-row:3; }
-    .session-row .cell-took, .session-row .cell-ended, .session-row .cell-next{
-      font-size:12px; color:var(--text-muted);
-      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    .session-row .cell-outcome{ order:1; }
+    .session-row .cell-project{ order:2; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .session-row .cell-took{ order:3; margin-left:0; }
+    .session-row .cell-ended{ order:4; margin-left:0; }
+    .session-row .cell-ended::before{ content:"· "; }
+    .session-row .cell-tasks{ order:5; flex-basis:100%; }
+    .session-row .cell-next{ order:6; flex-basis:100%; }
+    .session-row .cell-next:empty{ display:none; }
+    .session-row .cell-next .btn-link, .session-row .resume-cmd{ min-height:44px; padding:0 8px; margin-left:-8px; }
+    .session-row .task-chip{
+      display:block; white-space:normal; border:none; padding:0; border-radius:0;
+      font-family:inherit; font-size:13px; color:var(--text);
     }
+    #sessions-finished-hidden{ flex-basis:100%; margin-left:0; }
+    .section-header{ flex-wrap:wrap; }
 
     .report-card .card-project{ width:auto; max-width:40%; }
     .report-summary-row{ flex-wrap:wrap; }

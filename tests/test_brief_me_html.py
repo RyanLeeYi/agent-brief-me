@@ -512,6 +512,13 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(page.locator("#sessions-finished-list .session-row")).to_have_count(2)
     sessions_width = page.evaluate("document.documentElement.scrollWidth")
     assert sessions_width <= 390, f"sessions view overflows at 390px: scrollWidth={sessions_width}"
+    # F22: stacked card - tasks text spans the row, next-action button is a 44px tap target
+    first_row = page.locator("#sessions-finished-list .session-row").first
+    tasks_w = first_row.locator(".cell-tasks").evaluate("el => el.getBoundingClientRect().width")
+    assert tasks_w >= 300, f"F22: .cell-tasks should span the row at 390px, got {tasks_w}px"
+    second_row = page.locator("#sessions-finished-list .session-row").nth(1)  # report row carries "open report"
+    next_h = second_row.locator(".cell-next button").evaluate("el => el.getBoundingClientRect().height")
+    assert next_h >= 44, f"F22: next-action button must be >=44px tall, got {next_h}px"
 
     page.locator("#sidebar-toggle").click()
     page.locator('.side-item[data-project="__all__"]').click()

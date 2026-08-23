@@ -5,7 +5,7 @@
   "features": [
     {
       "id": "F21",
-      "title": "手機版面：sessions 表格與 report 卡片在 390px 不跑版",
+      "name": "手機版面：sessions 表格與 report 卡片在 390px 不跑版",
       "status": "failing",
       "signed_off": true,
       "touches": [

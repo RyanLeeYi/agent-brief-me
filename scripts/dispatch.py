@@ -24,6 +24,7 @@ binary, a real ~/.agent-brief, or a real ~/.claude.json:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -151,16 +152,57 @@ def unconsumed_answers_for(
     ]
 
 
+FEATURE_TOKEN_RE = re.compile(r"[A-Z]+[0-9]+")
+
+
+def classify_task(title: str) -> dict[str, Any]:
+    """Normalize one question title into a dispatches.jsonl tasks entry:
+    {"feature": "F13"|None, "kind": "sign-off"|"dispatch"|"question", "title": title}.
+    `kind` comes from the title's "[kind] " prefix (question if neither
+    matches). `feature` is the first [A-Z]+[0-9]+ token right after the
+    "[kind] <project>" lead-in - see examples/feature-list-collector.py for
+    the two prefixed title formats ("[sign-off] <project> <id>: <title>",
+    "[dispatch] <project>: ..."); a plain question title has no lead-in to
+    strip, so its first token is checked as-is.
+    ponytail: a dispatch title's lead-in is always followed by free text,
+    never a feature id (any id appears later, inside "(... failing: F11,
+    F13)"), so it short-circuits to feature=None instead of tokenizing.
+    """
+    if title.startswith("[sign-off] "):
+        kind, body = "sign-off", title[len("[sign-off] "):]
+    elif title.startswith("[dispatch] "):
+        return {"feature": None, "kind": "dispatch", "title": title}
+    else:
+        kind, body = "question", title
+
+    if kind == "sign-off":
+        body = body.split(" ", 1)[1] if " " in body else ""  # drop "<project>"
+
+    first_token = body.split(None, 1)[0] if body.strip() else ""
+    match = FEATURE_TOKEN_RE.match(first_token)
+    return {"feature": match.group(0) if match else None, "kind": kind, "title": title}
+
+
 def tasks_for(
     unconsumed: list[dict[str, Any]],
     question_project: dict[str, dict[str, str]],
-) -> list[str]:
-    """Question titles for the consumed answers, in prompt order (see
-    build_prompt), for the started record's `tasks` field."""
-    return [
-        question_project.get(entry["record"]["question_id"], {}).get("title", "")
-        for entry in unconsumed
-    ]
+) -> list[dict[str, Any]]:
+    """Normalized task objects for the consumed answers, in prompt order (see
+    build_prompt), for the started record's `tasks` field. Entries sharing
+    the same (feature, kind) with a non-null feature are deduplicated,
+    keeping only the first."""
+    seen: set[tuple[str, str]] = set()
+    tasks: list[dict[str, Any]] = []
+    for entry in unconsumed:
+        title = question_project.get(entry["record"]["question_id"], {}).get("title", "")
+        task = classify_task(title)
+        key = (task["feature"], task["kind"])
+        if task["feature"] is not None:
+            if key in seen:
+                continue
+            seen.add(key)
+        tasks.append(task)
+    return tasks
 
 
 def build_prompt(project: str, unconsumed: list[dict[str, Any]], delegate: bool = True) -> str:

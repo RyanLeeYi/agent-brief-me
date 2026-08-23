@@ -1,11 +1,14 @@
 """F13: dispatch.py records started/finished lines and notifies once per batch.
-Run: python tests/test_dispatch_batch.py  (stdlib only; fake claude = sleep 1)"""
+Run: python tests/test_dispatch_batch.py  (stdlib only; fake claude = sleep 1)
+F23-A: tasks_for's {feature, kind, title} normalization - run via
+`python -m unittest tests.test_dispatch_batch`."""
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
+import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DISPATCH = os.path.join(ROOT, "scripts", "dispatch.py")
@@ -68,9 +71,11 @@ def main():
     print("two started lines, one batch_id - OK")
 
     by_project = {r["project"]: r for r in started}
-    assert by_project["a"]["tasks"] == ["Pick a datastore"], by_project["a"]
+    assert by_project["a"]["tasks"] == [
+        {"feature": None, "kind": "question", "title": "Pick a datastore"}
+    ], by_project["a"]
     assert by_project["b"]["tasks"] == [], by_project["b"]
-    print("started tasks include consumed answer's question title - OK")
+    print("started tasks include consumed answer's normalized task object - OK")
 
     def finished():
         rs = [json.loads(l) for l in open(path, encoding="utf-8")]
@@ -87,5 +92,65 @@ def main():
     print("OK: F13 dispatch batch tests passed.")
 
 
+class TasksForTests(unittest.TestCase):
+    """F23-A: tasks_for normalizes question titles into
+    {"feature": "F13"|None, "kind": "sign-off"|"dispatch"|"question", "title": ...}."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from dispatch import tasks_for  # noqa: E402
+
+        self.tasks_for = tasks_for
+
+    def _run(self, titles):
+        question_project = {str(i): {"project": "p", "title": t} for i, t in enumerate(titles)}
+        unconsumed = [{"record": {"question_id": str(i)}} for i in range(len(titles))]
+        return self.tasks_for(unconsumed, question_project)
+
+    def test_sign_off_prefix_extracts_feature_after_project(self):
+        title = "[sign-off] offer-radar F13: 查詢…"
+        self.assertEqual(
+            self._run([title]), [{"feature": "F13", "kind": "sign-off", "title": title}]
+        )
+
+    def test_dispatch_prefix_feature_is_null(self):
+        title = "[dispatch] mission-control: run tonight? (4 signed failing: F11, F13)"
+        self.assertEqual(
+            self._run([title]), [{"feature": None, "kind": "dispatch", "title": title}]
+        )
+
+    def test_no_prefix_is_question_kind_with_leading_feature(self):
+        title = "F22 要走 agy subprocess…"
+        self.assertEqual(
+            self._run([title]), [{"feature": "F22", "kind": "question", "title": title}]
+        )
+
+    def test_title_without_a_feature_token_is_null(self):
+        self.assertEqual(
+            self._run(["Pick a datastore"]),
+            [{"feature": None, "kind": "question", "title": "Pick a datastore"}],
+        )
+
+    def test_same_feature_and_kind_deduplicated_keeping_first(self):
+        titles = [
+            "[sign-off] offer-radar F13: first copy",
+            "[sign-off] offer-radar F13: stale duplicate",
+            "[sign-off] offer-radar F14: different feature",
+        ]
+        self.assertEqual(
+            self._run(titles),
+            [
+                {"feature": "F13", "kind": "sign-off", "title": titles[0]},
+                {"feature": "F14", "kind": "sign-off", "title": titles[2]},
+            ],
+        )
+
+    def test_null_feature_entries_are_not_deduplicated(self):
+        titles = ["Pick a datastore", "Pick a datastore"]
+        self.assertEqual(len(self._run(titles)), 2)
+
+
 if __name__ == "__main__":
     main()
+    print()
+    unittest.main(verbosity=2)

@@ -205,7 +205,7 @@ def tasks_for(
     return tasks
 
 
-def build_prompt(project: str, unconsumed: list[dict[str, Any]], delegate: bool = True) -> str:
+def build_prompt(project: str, unconsumed: list[dict[str, Any]], delegate: bool = False) -> str:
     # ponytail: same prompt for headless and --watch; the BRIEF_SUBMIT
     # sentence is harmless in an interactive window (user just sees it).
     delegation = DELEGATION_SENTENCE if delegate else NO_DELEGATION_SENTENCE
@@ -232,7 +232,7 @@ DISPATCH_DEFAULTS = {
     "permission_mode": "auto",
     "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
     "model": None,
-    "delegate": True,
+    "delegate": False,
 }
 PERMISSION_MODES = ("auto", "bypassPermissions")
 

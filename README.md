@@ -134,7 +134,7 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
   "permission_mode": "auto",
   "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
   "model": null,
-  "delegate": true
+  "delegate": false
 }
 ```
 
@@ -144,7 +144,7 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
 | `permission_mode` | `auto` (default; combined with `allowed_tools`, classifier-blocked actions are silently denied in headless mode) or `bypassPermissions` |
 | `allowed_tools` | comma-separated `--allowedTools` value used with `auto` |
 | `model` | `--model` for the worker; `null` keeps Claude Code's default |
-| `delegate` | `false` tells workers to work solo and blocks the `Agent` tool - use it if your repos have no subagent-delegation rules |
+| `delegate` | `false` (default) tells workers to work solo and blocks the `Agent` tool; `true` lets workers dispatch subagents - it requires your environment to already have the `baton-dispatch` skill and an `executor` agent type installed, neither of which ships with this plugin |
 
 `~/.agent-brief` is always passed via `--add-dir` so `brief-submit` can write the inbox from inside a project. Missing keys fall back to the defaults above; an unknown `permission_mode` falls back to `auto`.
 

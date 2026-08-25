@@ -150,6 +150,39 @@ class TasksForTests(unittest.TestCase):
         self.assertEqual(len(self._run(titles)), 2)
 
 
+class DelegateDefaultTests(unittest.TestCase):
+    """F25: dispatch.delegate defaults to False (no config, or a dispatch
+    section missing the key); an explicit `delegate: true` in config.json
+    restores the DELEGATION_SENTENCE + no --disallowedTools behavior."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import dispatch  # noqa: E402
+
+        self.dispatch = dispatch
+
+    def test_no_config_defaults_to_no_delegation(self):
+        settings = self.dispatch.dispatch_settings({})
+        self.assertFalse(settings["delegate"])
+        prompt = self.dispatch.build_prompt("p", [], delegate=settings["delegate"])
+        self.assertIn(self.dispatch.NO_DELEGATION_SENTENCE, prompt)
+        args = self.dispatch.claude_args(settings, "/tmp/brief")
+        self.assertIn("--disallowedTools", args)
+        self.assertIn("Agent", args)
+
+    def test_dispatch_section_without_delegate_key_defaults_false(self):
+        settings = self.dispatch.dispatch_settings({"dispatch": {"watch": True}})
+        self.assertFalse(settings["delegate"])
+
+    def test_config_delegate_true_restores_delegation_sentence(self):
+        settings = self.dispatch.dispatch_settings({"dispatch": {"delegate": True}})
+        self.assertTrue(settings["delegate"])
+        prompt = self.dispatch.build_prompt("p", [], delegate=settings["delegate"])
+        self.assertIn(self.dispatch.DELEGATION_SENTENCE, prompt)
+        args = self.dispatch.claude_args(settings, "/tmp/brief")
+        self.assertNotIn("--disallowedTools", args)
+
+
 if __name__ == "__main__":
     main()
     print()

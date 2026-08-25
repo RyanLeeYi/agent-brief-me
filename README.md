@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B_stdlib_only-3776ab?style=flat-square)](https://www.python.org)
 [![Storage](https://img.shields.io/badge/storage-append--only_JSONL-lightgrey?style=flat-square)](docs/schema.md)
 
-[Features](#features) | [Install](#install) | [Daily loop](#daily-loop) | [Dispatch settings](#dispatch-settings) | [Extending](#extending)
+[Features](#features) | [Install](#install) | [Daily loop](#daily-loop) | [Dispatch settings](#dispatch-settings) | [Extending](#extending) | [Trust boundary](#trust-boundary)
 
 [繁體中文](README.zh-TW.md)
 
@@ -208,6 +208,17 @@ Your script receives e.g. `send-telegram.py my-project question high "prod deplo
 ### Teaching other sessions to use the inbox
 
 Workers spawned by `dispatch.py` get the protocol in their prompt: use `brief-submit` when blocked on a user decision, and once more before finishing to report. For sessions you start by other means (cron, your own scripts), `brief-init` offers to append that one-paragraph protocol to a rules file you name - your global instructions file is the usual target.
+
+## Trust boundary
+
+Three things below are left to your own environment; this plugin does not provide them.
+
+1. **Answer enforcement.** dispatch only places the answer's raw text into the worker's prompt - a session that chooses to ignore it is not stopped here.
+   Suggestion: add your own `PreToolUse` gate that consumes sign-off-style answers before allowing writes.
+2. **Write isolation.** a headless session's working directory is the project's main checkout - this plugin never opens a worktree.
+   Suggestion: use your own hook, or run dispatched work through CI, when the work needs isolation.
+3. **Completion verification.** a report is the session's own self-reported claim - this plugin never checks it against the work.
+   Suggestion: wire your own acceptance or review pass before trusting a report.
 
 ## Further reading
 

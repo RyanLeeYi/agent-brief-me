@@ -16,6 +16,8 @@
 
 Working agents that hit a decision only you can make, or that finish a piece of work, append a record to a shared inbox instead of blocking mid-run. You review the inbox in batches, answer in one sitting, and let follow-up sessions run unattended on your answers.
 
+![The inbox web UI: questions grouped by project, one-click answers, dispatch after save](docs/images/inbox.png)
+
 ## Features
 
 - **Non-blocking questions** - a worker files a question and keeps going (or finishes); nobody waits on a prompt overnight.

@@ -351,7 +351,10 @@ def _state(brief_home, collector_warning):
 def _cmd_load(args):
     brief_home = get_brief_home()
     warning = run_collector(brief_home)
+    requeued = _requeue_stale_batches(brief_home)  # F24, before _state() so
+    # unconsumed_projects/unconsumed_counts reflect what was just requeued.
     payload, _, _, _ = _state(brief_home, warning)
+    payload["requeued"] = requeued
     return payload
 
 
@@ -574,6 +577,131 @@ def _load_batches(path):
         elif rec.get("type") == "finished":
             entry["finished"] = rec
     return batches
+
+
+def _requeued_batch_ids(path):
+    """Set of batch_ids that already have a "requeued" line in
+    dispatches.jsonl (F24's dedup condition). Malformed lines are skipped,
+    same as _load_batches."""
+    out = set()
+    for line in iter_lines(path):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("type") == "requeued" and rec.get("batch_id") is not None:
+            out.add(rec["batch_id"])
+    return out
+
+
+def _task_title(task):
+    """A tasks[] element's title: the "title" field of the F23 object
+    shape, or the element itself for a pre-F23 plain string."""
+    return task.get("title") if isinstance(task, dict) else task
+
+
+def _requeue_candidates(brief_home):
+    """F24: which started dispatch batches should requeue their consumed
+    answers, per docs/schema.md's "Requeue" rule. A batch qualifies once
+    all four hold: (a) at least one of its started records has a non-empty
+    `tasks` list (a missing `tasks` key folds to [], so a legacy batch
+    never qualifies); (b) the session has ended - the batch has a
+    `finished` line, or every started record's pid is dead; (c) no report
+    has been filed for any of the batch's projects at or after that
+    record's `started_at`; (d) no `requeued` line for this batch_id yet.
+
+    Returns [(batch_id, [(question_id, project, title), ...]), ...] for
+    qualifying batches only. question_id is resolved by matching a task's
+    (project, title) against the last answered question whose folded
+    answer is still `consumed: true` - dispatch.py's own definition of
+    "this title was consumed" (docs/schema.md's "Collector idempotency").
+    A task that cannot be resolved this way is dropped; the batch still
+    gets its `requeued` line so it is not retried forever.
+    """
+    dispatches_path = os.path.join(brief_home, "dispatches.jsonl")
+    batches = _load_batches(dispatches_path)
+    if not batches:
+        return []
+    already_requeued = _requeued_batch_ids(dispatches_path)
+    inbox_path = os.path.join(brief_home, "inbox.jsonl")
+    reports = _report_times(inbox_path)
+    questions, _, _, _, q_last_status = fold_inbox(inbox_path)
+    answers_by_question = fold_answers(os.path.join(brief_home, "answers.jsonl"))
+
+    resolved = {}
+    for qid, q in questions.items():
+        status = q_last_status.get(qid)
+        if not status or status["status"] != "answered":
+            continue
+        answer = answers_by_question.get(qid)
+        if not answer or not answer.get("consumed", False):
+            continue
+        resolved[(q["project"], q["title"])] = qid
+
+    out = []
+    for batch_id, batch in batches.items():
+        if batch_id in already_requeued:
+            continue
+        started = batch["started"]
+        if not started or not any(rec.get("tasks", []) for rec in started):
+            continue
+
+        if batch["finished"] is None:
+            try:
+                ended = all(not _pid_alive(int(rec.get("pid", 0))) for rec in started)
+            except (TypeError, ValueError):
+                ended = False
+            if not ended:
+                continue
+
+        no_report = True
+        for rec in started:
+            try:
+                t0 = _parse_utc(rec["started_at"])
+            except (KeyError, ValueError):
+                no_report = False
+                break
+            if _report_ended_at(reports, rec.get("project"), t0) is not None:
+                no_report = False
+                break
+        if not no_report:
+            continue
+
+        matched, seen_qids = [], set()
+        for rec in started:
+            project = rec.get("project")
+            for task in rec.get("tasks", []):
+                qid = resolved.get((project, _task_title(task)))
+                if qid is None or qid in seen_qids:
+                    continue
+                seen_qids.add(qid)
+                matched.append((qid, project, _task_title(task)))
+        out.append((batch_id, matched))
+    return out
+
+
+def _requeue_stale_batches(brief_home):
+    """Perform F24's requeue for every qualifying batch (_requeue_candidates):
+    for each resolved (question_id, project, title), append a copy of that
+    question's last answer with `consumed` flipped back to false and
+    `answered_at` reset to now, then append one `requeued` line per batch.
+    Returns {project: [title, ...]} for what was just requeued (a task that
+    could not be resolved to a question is omitted, not just its title)."""
+    dispatches_path = os.path.join(brief_home, "dispatches.jsonl")
+    answers_path = os.path.join(brief_home, "answers.jsonl")
+    answers_by_question = fold_answers(answers_path)
+
+    requeued = defaultdict(list)
+    for batch_id, matched in _requeue_candidates(brief_home):
+        for qid, project, title in matched:
+            last_answer = answers_by_question.get(qid)
+            if last_answer is None:
+                continue
+            new_answer = {**last_answer, "consumed": False, "answered_at": _now()}
+            atomic_append_line(answers_path, new_answer)
+            requeued[project].append(title)
+        atomic_append_line(dispatches_path, {"type": "requeued", "batch_id": batch_id, "at": _now()})
+    return dict(requeued)
 
 
 _BLOCKED_SPLIT_RE = re.compile(r"[;；]")  # ";" or full-width "；"

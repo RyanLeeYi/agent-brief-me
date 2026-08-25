@@ -23,9 +23,14 @@ Runs the configured collector first (a failing collector is reported in
 - `pending_questions`: `{project: [ {id, project, title, body, severity, session_id?, options, age} ]}`
   (projects alphabetical; questions high severity first, then oldest first)
 - `unconsumed_projects`: projects with an answer not yet used by dispatch
+- `requeued`: `{project: [task title, ...]}` - answers from a dispatch whose
+  session ended without ever filing a report, just re-queued as unconsumed
+  (F24); empty when nothing was requeued this run
 
-If `collector_warning` is set, show it. If both `unread_reports` and
-`pending_questions` are empty, say the inbox is empty and stop.
+If `collector_warning` is set, show it. If `requeued` is non-empty, say
+"上次派工未回報，已重新排入" and list each project's task titles. If both
+`unread_reports` and `pending_questions` are empty, say the inbox is empty
+and stop.
 
 ## Step 2: Show unread reports
 

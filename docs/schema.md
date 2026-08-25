@@ -212,12 +212,15 @@ passes one of them, so its checkbox state is what you get (F17).
 `--watch` dispatches also pre-accept the one-time workspace trust dialog by
 flipping `hasTrustDialogAccepted` to `true` for the project in claude.json
 (default `~/.claude.json`, overridable via `BRIEF_CLAUDE_JSON` for testing);
-headless (`-p`) dispatches never touch claude.json. Two shapes, discriminated
-by `type`:
+headless (`-p`) dispatches never touch claude.json. Three shapes,
+discriminated by `type`. A reader that encounters some other `type` value in
+this file must skip that line and keep folding rather than error - fail-open,
+so a future record type never breaks an older reader:
 
 ```json
 {"type": "started", "batch_id": "<uuid4 shared by one dispatch.py run>", "project": "my-project", "pid": 12345, "started_at": "2026-08-22T01:02:03Z", "log": "/path/to/logs/my-project-<hex>.log", "tasks": [{"feature": "F13", "kind": "sign-off", "title": "[sign-off] my-project F13: ..."}, {"feature": null, "kind": "question", "title": "Which datastore for the inbox?"}]}
 {"type": "finished", "batch_id": "<same uuid4>", "finished_at": "2026-08-22T01:20:00Z", "exit_codes": [0, 0]}
+{"type": "requeued", "batch_id": "<same uuid4 as the started batch>", "at": "2026-08-25T02:00:00Z"}
 ```
 
 `log` is `null` for `--watch` windows. `tasks` holds one `{feature, kind, title}` object per unconsumed answer this
@@ -245,6 +248,27 @@ or after the session's `started_at` (F15). The report rule exists because a
 `--watch` claude window stays alive at its prompt after the work is done, so
 pid liveness alone would show it running forever. A report-ended session has
 `finished_at` = the earliest such report's `created_at` and `exit_code: null`.
+
+### Requeue (F24)
+
+`python scripts/brief_me.py load` requeues a `started` batch whose session
+ended without ever getting a report back. A batch qualifies once all four
+hold: (a) at least one of its started records has a non-empty `tasks` list
+(a missing `tasks` key folds to `[]`, per above, so a legacy batch never
+qualifies); (b) the session has ended - the batch has a `finished` line, or
+every started record's `pid` is dead; (c) no report has been filed for any
+of the batch's projects at or after that record's `started_at`; (d) no
+`requeued` line for this `batch_id` exists yet (this is what makes requeuing
+idempotent - once written, a batch requeues at most once).
+
+For each task in a qualifying batch whose title still resolves to an
+answered, `consumed: true` question for that project, `load` appends a new
+`answer` line for that `question_id`: a copy of the question's last answer
+with `consumed` flipped back to `false` and `answered_at` reset to now (per
+"Deriving current state" above, this is how `consumed` folds back to
+`false`). It then appends one `requeued` line for the batch. The answers
+that were just requeued are then offered for dispatch again on the next
+pass, same as any other unconsumed answer.
 
 ## Atomic append rule
 

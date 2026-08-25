@@ -373,6 +373,109 @@ class BriefMeAPITestCase(unittest.TestCase):
         finally:
             shutil.rmtree(project_dir, ignore_errors=True)
 
+    # -- CLI `load` requeue (F24) ----------------------------------------
+    def _dispatches_path(self):
+        return os.path.join(self.home, "dispatches.jsonl")
+
+    def _consumed_answer(self, qid, chosen="A"):
+        """Question -> answered -> consumed, mirroring dispatch.py's own
+        writes: an answer line, its "answered" status, then a second answer
+        line flipping `consumed` to true."""
+        answer, status = brief_me.build_answer_and_status(qid, chosen=chosen)
+        brief_me.atomic_append_line(self._answers_path(), answer)
+        brief_me.atomic_append_line(self._inbox_path(), status)
+        brief_me.atomic_append_line(self._answers_path(), {**answer, "consumed": True})
+
+    def _write_dispatches(self, records):
+        with open(self._dispatches_path(), "w", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+
+    @staticmethod
+    def _ts(dt):
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_load_requeues_started_batch_with_no_report(self):
+        qid = self._add_question(project="demo", title="Pick one", choices=["A"])
+        self._consumed_answer(qid)
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": 999999,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None,
+             "tasks": [{"feature": None, "kind": "question", "title": "Pick one"}]},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+
+        data = brief_me._cmd_load([])
+
+        self.assertEqual(data["requeued"], {"demo": ["Pick one"]})
+        self.assertIn("demo", data["unconsumed_projects"])
+        answers_by_question = brief_me.fold_answers(self._answers_path())
+        self.assertFalse(answers_by_question[qid]["consumed"])
+        self.assertEqual(answers_by_question[qid]["chosen"], "A")
+        self.assertIn(batch, brief_me._requeued_batch_ids(self._dispatches_path()))
+
+    def test_load_does_not_requeue_when_report_filed_after_started(self):
+        qid = self._add_question(project="demo", title="Pick one", choices=["A"])
+        self._consumed_answer(qid)
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": 999999,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None,
+             "tasks": [{"feature": None, "kind": "question", "title": "Pick one"}]},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+        self._add_report(project="demo", summary="F1 passing")
+
+        data = brief_me._cmd_load([])
+
+        self.assertEqual(data["requeued"], {})
+        answers_by_question = brief_me.fold_answers(self._answers_path())
+        self.assertTrue(answers_by_question[qid]["consumed"])
+        self.assertNotIn(batch, brief_me._requeued_batch_ids(self._dispatches_path()))
+
+    def test_load_does_not_requeue_batch_twice(self):
+        qid = self._add_question(project="demo", title="Pick one", choices=["A"])
+        self._consumed_answer(qid)
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": 999999,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None,
+             "tasks": [{"feature": None, "kind": "question", "title": "Pick one"}]},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+            {"type": "requeued", "batch_id": batch, "at": self._ts(now)},
+        ])
+
+        data = brief_me._cmd_load([])
+
+        self.assertEqual(data["requeued"], {})
+        answers_by_question = brief_me.fold_answers(self._answers_path())
+        self.assertTrue(answers_by_question[qid]["consumed"])  # untouched
+        with open(self._dispatches_path(), encoding="utf-8") as f:
+            lines = [line for line in f if line.strip()]
+        self.assertEqual(len(lines), 3)  # no duplicate "requeued" line appended
+
+    def test_load_legacy_started_without_tasks_key_does_not_crash_or_requeue(self):
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": 999999,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+
+        data = brief_me._cmd_load([])  # must not raise
+
+        self.assertEqual(data["requeued"], {})
+        self.assertNotIn(batch, brief_me._requeued_batch_ids(self._dispatches_path()))
+
     # -- GET /api/state sessions (F14) ----------------------------------
     def test_state_sessions_running_finished_window_and_current(self):
         project_dir = tempfile.mkdtemp(prefix="brief-project-")

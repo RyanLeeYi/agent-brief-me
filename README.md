@@ -25,7 +25,8 @@ Working agents that hit a decision only you can make, or that finish a piece of 
 - **Dispatch on your answers** - each confirmed project gets a headless `claude -p` worker carrying exactly the answers it has not consumed yet.
 - **Watch mode** - `/brief-me --watch` opens workers as visible interactive windows instead. The first time a project is opened this way Claude Code shows its one-time workspace trust dialog; accept it once per project.
 - **Web UI** - `brief_me.py serve` gives the same inbox as a local page: zero tokens, click to answer, dismiss and restore questions, dispatch from the browser.
-- **Resumable workers** - every record carries the worker's `session_id`; `claude --resume <id>` reopens that session to ask follow-ups.
+- **Resumable workers** - every record carries the worker's `session_id`; `claude --resume <id>` reopens that session to ask follow-ups. In the web UI the command is a click-to-copy button.
+- **Phone-friendly** - the web UI works one-handed on a phone: drawer sidebar, stacked cards, 44px touch targets. Answer the inbox from bed.
 - **Pluggable collector and notifier** - file questions from any source (feature lists, to-do files, webhooks) and get pinged on whatever your notifier script decides matters.
 - **No database, no dependencies** - two append-only JSONL files and the Python standard library. State is derived by folding the files, so an interrupted run never loses anything.
 
@@ -103,7 +104,11 @@ python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve        # http:/
 python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve --port 9000
 ```
 
-It binds to 127.0.0.1 by default (`--host 0.0.0.0` or a VPN address opts in to LAN/VPN access - the API has no authentication, so only on a network you trust), reads and appends the same two JSONL files as `/brief-me` (mix the two freely), and its Refresh button runs the configured collector. Each question offers its choices, a free-text "Other answer", and "Skip for now"; nothing is written until you press Save. What each decision writes:
+It binds to 127.0.0.1 by default (`--host 0.0.0.0` or a VPN address opts in to LAN/VPN access - the API has no authentication, so only on a network you trust), reads and appends the same two JSONL files as `/brief-me` (mix the two freely), and its Refresh button runs the configured collector. Each question offers its choices, a free-text "Other answer", and "Skip for now"; nothing is written until you press Save.
+
+Reports collapse to one line (project, feature chip like `F12 passing`, first line of the summary) and expand into **Done / Blocked / Handoff** sections. Expanding one does not mark it read - press **Mark read** explicitly. On both cards the `claude --resume <session_id>` command is a button: click it to copy the command, then paste it in that project's directory to reopen the worker.
+
+What each decision writes:
 
 | Decision | Written | Effect |
 |---|---|---|
@@ -111,6 +116,13 @@ It binds to 127.0.0.1 by default (`--host 0.0.0.0` or a VPN address opts in to L
 | Skip for now | nothing | asked again next time |
 | Dismiss question | `cancelled` status | gone from the inbox; the Dismissed page lists it with a Restore button, which writes `reopened` |
 | Dispatch after save (checkbox) | - | after saving, runs `scripts/dispatch.py` for every project with unconsumed answers; `--watch` opens visible windows instead of headless sessions |
+
+### Sessions view
+
+The sidebar's **Sessions** entry shows what happened after you dispatched:
+
+- **Running** - each live worker with its project, the tasks it was sent, and elapsed time.
+- **Finished** - a table of past workers: outcome badge (`report` / `killed` / `ctrl-c`), tasks, duration, and the same click-to-copy `claude --resume` button to reopen any of them.
 
 ## Dispatch settings
 

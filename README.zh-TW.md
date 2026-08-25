@@ -25,7 +25,8 @@
 - **照你的答案派工** - 每個你確認的專案開一個 headless `claude -p` worker，只帶它尚未消費的答案。
 - **觀察模式** - `/brief-me --watch` 改成開可見的互動視窗，讓你盯著看。某個專案第一次這樣開時，Claude Code 會跳一次性的資料夾信任對話框，每個專案按一次即可。
 - **Web UI** - `brief_me.py serve` 把同一個收件匣變成本機網頁：零 token、點選作答、丟棄與還原問題、直接從瀏覽器派工。
-- **可接續的 worker** - 每筆紀錄都帶 worker 的 `session_id`，`claude --resume <id>` 就能回到那個 session 追問。
+- **可接續的 worker** - 每筆紀錄都帶 worker 的 `session_id`，`claude --resume <id>` 就能回到那個 session 追問。Web UI 上這串指令是按鈕，點一下就複製。
+- **手機友善** - Web UI 單手可用：抽屜式側欄、堆疊卡片、44px 觸控目標。躺在床上就能批完收件匣。
 - **可插拔的 collector 與通知** - 從任何來源（feature list、待辦檔、webhook）投問題，高嚴重度時通知你。
 - **沒有資料庫、沒有依賴** - 兩個只追加的 JSONL 檔加 Python 標準函式庫。狀態靠折疊檔案推導，中途斷掉不會丟任何東西。
 
@@ -102,7 +103,11 @@ python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve        # http:/
 python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve --port 9000
 ```
 
-預設只綁 127.0.0.1（`--host 0.0.0.0` 或 VPN 位址可開放給區網／VPN——API 沒有驗證，只能在你完全信任的網段用），讀寫的是與 `/brief-me` 相同的兩個 JSONL 檔（兩者可混用），Refresh 鈕會跑設定的 collector。每題提供選項、自由填寫的「Other answer」與「Skip for now」；按 Save 之前什麼都不會寫入。各種處置寫什麼：
+預設只綁 127.0.0.1（`--host 0.0.0.0` 或 VPN 位址可開放給區網／VPN——API 沒有驗證，只能在你完全信任的網段用），讀寫的是與 `/brief-me` 相同的兩個 JSONL 檔（兩者可混用），Refresh 鈕會跑設定的 collector。每題提供選項、自由填寫的「Other answer」與「Skip for now」；按 Save 之前什麼都不會寫入。
+
+Report 收合成一列（專案、`F12 passing` 這類 feature 晶片、摘要首行），展開後分 **Done / Blocked / Handoff** 三段。展開不會自動標已讀，要按 **Mark read** 才算。兩種卡片上的 `claude --resume <session_id>` 都是按鈕：點一下複製指令，到該專案目錄貼上就能重開那個 worker。
+
+各種處置寫什麼：
 
 | 處置 | 寫入 | 效果 |
 |---|---|---|
@@ -110,6 +115,13 @@ python ~/.claude/skills/agent-brief-me/scripts/brief_me.py serve --port 9000
 | Skip for now | 不寫 | 下次再問 |
 | Dismiss question | `cancelled` 狀態 | 從收件匣消失；Dismissed 頁列出並提供 Restore，按下寫 `reopened` |
 | Dispatch after save（勾選） | - | 儲存後對所有有未消費答案的專案執行 `scripts/dispatch.py`；`--watch` 改開可見視窗而非 headless session |
+
+### Sessions 檢視
+
+側欄的 **Sessions** 顯示派工之後發生了什麼：
+
+- **Running** - 每個進行中的 worker：專案、派給它的任務、經過時間。
+- **Finished** - 歷史 worker 的表格：結果徽章（`report` / `killed` / `ctrl-c`）、任務、耗時，以及同一顆點擊複製的 `claude --resume` 按鈕，可重開任何一場。
 
 ## 派工設定
 

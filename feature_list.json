@@ -1,6 +1,56 @@
 {
-  "project": "agent-brief-me",
-  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
-  "archive": "docs/archive/features.jsonl",
-  "features": []
+ "project": "agent-brief-me",
+ "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
+ "archive": "docs/archive/features.jsonl",
+ "features": [
+  {
+   "id": "F24",
+   "name": "派工未回報自動重排（requeue）：session 結束卻沒有 report 時，把已消費的答案翻回 unconsumed 重新排入",
+   "status": "failing",
+   "touches": [
+    "scripts/brief_me.py",
+    "docs/schema.md",
+    "tests/test_brief_me_api.py",
+    "skills/brief-me/SKILL.md"
+   ],
+   "acceptance": [
+    "docs/schema.md 的 dispatches.jsonl 一節新增記錄型別 `{\"type\": \"requeued\", \"batch_id\": \"<uuid4，對應 started 的 batch_id>\", \"at\": \"<UTC ISO8601>\"}`；同節明寫：讀者遇到未知 type 的記錄必須跳過，不得報錯（fail-open）。",
+    "brief_me.py `load` 新增 requeue 判定，對每個 `started` 批次檢查四條件全滿足才動作：(a) `tasks` 非空（缺 tasks 欄位視為空，legacy 記錄因此永不 requeue）；(b) session 已結束——該 batch 有 `finished` line，或 pid 已死（沿用既有 `_pid_alive`，unknown 算活著）；(c) 該批次專案沒有 `created_at >= started_at` 的 report（沿用既有 `_report_ended_at` 判定）；(d) dispatches.jsonl 裡沒有同 `batch_id` 的 `requeued` line。動作＝對該批次 tasks 對應的每個 question（由 started 記錄回溯其消費的 answer 的 question_id）各補一行 answer line：欄位沿用該題摺疊後的最後一行 answer，僅 `consumed` 改 false、`answered_at` 改當下；並對該批次補一行 `requeued`。全部走 atomic_append_line，不編輯既有行。",
+    "`load` 輸出新增 `requeued: {project: [task title, ...]}`（本次 load 剛 requeue 的；沒有就空 dict）；skills/brief-me/SKILL.md Step 1 加一句：`requeued` 非空時顯示「上次派工未回報，已重新排入」與各專案的 task 標題。",
+    "tests/test_brief_me_api.py 新增四邊測試：(1) started+finished、無 report → answer 翻回 unconsumed、寫入 requeued line、unconsumed_projects 重新包含該專案；(2) started 之後有同專案 report → 不 requeue；(3) 已有 requeued line 的批次再跑 load → 不重複補行；(4) legacy started（無 tasks 欄位）→ 不報錯不 requeue。",
+    "`python -m unittest discover tests` 全綠。"
+   ],
+   "signed_off": true
+  },
+  {
+   "id": "F25",
+   "name": "dispatch delegate 預設改 False：陌生環境預設不派 subagent，baton-dispatch/executor 只在 config 明寫 true 時注入",
+   "status": "failing",
+   "touches": [
+    "scripts/dispatch.py",
+    "tests/test_dispatch_batch.py",
+    "README.md"
+   ],
+   "acceptance": [
+    "dispatch.py `DISPATCH_DEFAULTS[\"delegate\"]` 改為 False；config.json 的 dispatch.delegate 明寫 true 時行為與現在完全相同（DELEGATION_SENTENCE 注入、不加 --disallowedTools Agent）。",
+    "tests/test_dispatch_batch.py 新增：無 config（或 dispatch 段缺 delegate）→ build_prompt 含 NO_DELEGATION_SENTENCE 且 claude_args 含 `--disallowedTools` 與 `Agent`；config delegate: true → build_prompt 含 DELEGATION_SENTENCE 且 claude_args 不含 --disallowedTools。",
+    "README.md 的 config 說明更新 delegate 預設值為 false，並註明：設 true 需要環境裡有 baton-dispatch skill 與 executor agent type，plugin 不附帶這兩者。",
+    "`python -m unittest discover tests` 全綠。"
+   ],
+   "signed_off": true
+  },
+  {
+   "id": "F26",
+   "name": "README「信任邊界」一節：明講答案強制力、寫入隔離、完工驗證由使用者環境負責",
+   "status": "failing",
+   "touches": [
+    "README.md"
+   ],
+   "acceptance": [
+    "README.md 新增一節（標題含 Trust boundary 或 信任邊界），明講三件事由使用者環境負責、plugin 不提供：(1) 答案的強制力——dispatch 只把答案原文放進 prompt，session 不遵守時 plugin 不會擋，建議自備 PreToolUse gate 消費 sign-off 類答案；(2) 寫入隔離——headless session 的工作目錄就是專案主 checkout，plugin 不開 worktree，建議需要隔離時用自己的 hook 或 CI；(3) 完工驗證——report 是 session 自我宣稱，plugin 不驗收，建議接自己的驗收流程。每件一行為什麼加一行建議做法，整節不超過 30 行。",
+    "該節不承諾任何 plugin 未實作的防護（不得出現 plugin 會擋／會驗證等字樣）。"
+   ],
+   "signed_off": true
+  }
+ ]
 }

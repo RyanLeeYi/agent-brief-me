@@ -10,15 +10,22 @@ Assumed format - `<project>/feature_list.json` at the repo root:
       "features": [
         {"id": "F12", "title": "...", "status": "failing", "signed_off": true},
         {"id": "F13", "title": "...", "status": "passing"},
+        {"id": "F14", "title": "...", "status": "failing", "signed_off": false, "rationale": "..."},
         ...
       ]
     }
 
-  - `status`      "failing" (open) or "passing" (done). Only failing entries count.
+  - `status`      "failing" (open), "passing" or "closed" (done). An entry
+                  that is "passing", "closed", or carries a `superseded_by`
+                  key is skipped entirely: no sign-off card, no dispatch
+                  candidate.
   - `signed_off`  true  -> the spec is approved; the entry is ready for a worker.
                   false -> filed as a "[sign-off]" question so the user approves it.
                   absent -> legacy entry, ignored (counted in a stderr notice).
   - `id`, `title` used in question titles; `name` is accepted as a fallback for title.
+  - `rationale`   optional string. When present and non-empty, it is prepended
+                  to the sign-off question's body, followed by a blank line
+                  and then the acceptance list.
 
 What it files (questions, severity "normal"):
   - one "[sign-off] <project> <id>: <title>" per failing entry with signed_off == false
@@ -29,8 +36,12 @@ What it files (questions, severity "normal"):
     brief-me). A proposal stays pending until answered or dismissed, even if
     the id set changes and a newer proposal is filed alongside it.
 
-Idempotent: a question is skipped while one with the identical title is still
-pending. `--dry-run` prints what would be filed without writing.
+Idempotent (see docs/schema.md "Collector idempotency"): a title is skipped
+while any question with it is pending (a "reopened" question folds back to
+pending, per "Deriving current state"), or is answered and its folded answer
+is not yet consumed - the user already decided and dispatch.py has not acted
+on it. Only never-asked, cancelled, or answered-and-consumed titles get a
+fresh question. `--dry-run` prints what would be filed without writing.
 
 Install: copy anywhere and point config.json at it, e.g.
     "collector": ["python", "/path/to/feature-list-collector.py"]
@@ -85,9 +96,15 @@ def brief_home():
     return os.environ.get("BRIEF_HOME", os.path.expanduser("~/.agent-brief"))
 
 
-def pending_questions(inbox_path):
-    """Pending questions (no status line referencing them): {title: (id, project)}."""
-    questions, closed = {}, set()
+def blocked_titles(inbox_path, answers_path):
+    """Titles that must not be re-filed right now, per docs/schema.md's
+    "Collector idempotency" rule: any question with the title is pending
+    (a last status line of "reopened" folds the question back to pending,
+    per "Deriving current state"), or is answered and its folded answer
+    (last line in answers.jsonl for that question_id) has consumed not
+    True. Cancelled and answered-and-consumed titles are left out, so they
+    are free to be asked again."""
+    questions, last_status = {}, {}
     try:
         with open(inbox_path, encoding="utf-8") as f:
             for line in f:
@@ -101,10 +118,36 @@ def pending_questions(inbox_path):
                 if rec.get("type") == "question":
                     questions[rec["id"]] = (rec.get("title", ""), rec.get("project", ""))
                 elif rec.get("type") == "status":
-                    closed.add(rec.get("ref"))
+                    last_status[rec.get("ref")] = rec.get("status")
     except OSError:
-        return {}
-    return {t: (qid, proj) for qid, (t, proj) in questions.items() if qid not in closed}
+        return set()
+
+    last_answer = {}
+    try:
+        with open(answers_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict) and rec.get("question_id"):
+                    last_answer[rec["question_id"]] = rec
+    except OSError:
+        pass
+
+    blocked = set()
+    for qid, (title, _proj) in questions.items():
+        st = last_status.get(qid)
+        if st is None or st == "reopened":
+            blocked.add(title)
+        elif st == "answered":
+            ans = last_answer.get(qid)
+            if ans is not None and not ans.get("consumed", False):
+                blocked.add(title)
+    return blocked
 
 
 def now_utc():
@@ -133,7 +176,10 @@ def scan_repo(name, path):
     # awaiting sign-off nor dispatchable (the delegation hook would deny them).
     unsigned, signed_failing, legacy = [], [], 0
     for feat in features:
-        if feat.get("status") == "passing":
+        # Settled entries never surface again: passing/closed are done, and a
+        # superseded_by entry keeps status "failing" forever but is replaced
+        # by a newer one, so treat it the same as passing/closed.
+        if feat.get("status") in ("passing", "closed") or feat.get("superseded_by"):
             continue
         flag = feat.get("signed_off")
         if flag is True:
@@ -149,10 +195,14 @@ def scan_repo(name, path):
     for feat in unsigned:
         acc = feat.get("acceptance", [])
         acc_text = "\n".join(f"- {a}" for a in acc) if isinstance(acc, list) else str(acc)
+        rationale = feat.get("rationale")
+        body = acc_text
+        if isinstance(rationale, str) and rationale.strip():
+            body = rationale.strip() + "\n\n" + acc_text
         title = feat.get("title") or feat.get("name") or ""
         questions.append({
             "title": f"[sign-off] {name} {feat.get('id')}: {title}",
-            "body": clip(acc_text),
+            "body": clip(body),
             "choices": ["Needs revision"],
             "recommendation": "Sign off as-is",
         })
@@ -169,8 +219,7 @@ def main():
     except (OSError, json.JSONDecodeError) as e:
         sys.exit(f"cannot read {cfg_path}: {e}")
     inbox = os.path.join(home, "inbox.jsonl")
-    pending = pending_questions(inbox)
-    already = set(pending)
+    already = blocked_titles(inbox, os.path.join(home, "answers.jsonl"))
     filed = skipped = 0
     for proj in projects:
         name, path = proj.get("name"), proj.get("path")
@@ -211,7 +260,8 @@ def main():
                 atomic_append_line(inbox, record)
                 print(f"filed: {q['title']}")
             filed += 1
-    print(f"brief-scan done: {filed} {'would be ' if dry else ''}filed, {skipped} already pending")
+    print(f"brief-scan done: {filed} {'would be ' if dry else ''}filed, {skipped} blocked "
+          f"(pending or answered-unconsumed)")
 
 
 if __name__ == "__main__":

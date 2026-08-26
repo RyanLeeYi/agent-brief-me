@@ -2,23 +2,5 @@
  "project": "agent-brief-me",
  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
  "archive": "docs/archive/features.jsonl",
- "features": [
-  {
-   "id": "F27",
-   "name": "範例 collector 補齊 schema.md 描述的去重規則與 rationale 支援",
-   "status": "failing",
-   "signed_off": true,
-   "rationale": "開源範例 examples/feature-list-collector.py 與 docs/schema.md 的「Collector idempotency」一節不一致：schema 說 pending 與 answered-unconsumed 都要跳過，範例只認 pending——文件描述的行為範例做不到，對開源使用者是誤導。另外作者本機的 collector 已支援條目的 rationale 欄位（sign-off 卡帶「為什麼做」的脈絡），範例一併補齊。取捨：legacy 條目（缺 signed_off 欄位）維持範例自己文件化的「忽略＋stderr 通知」設計，不改成本機版的「照樣投卡」——那是範例 docstring 既有的契約，改了反而破壞對外承諾。",
-   "acceptance": [
-    "examples/feature-list-collector.py 跳過 status 為 passing 或 closed、或帶 superseded_by 欄位的條目：不產 sign-off 卡、不列入 dispatch 候選。",
-    "去重規則與 docs/schema.md「Collector idempotency」一節逐字一致：同 title 已有 pending question 時跳過；已 answered 且其折疊後答案的 consumed 不為 true 時跳過；never-asked、cancelled、answered-and-consumed 三種才重新投。折疊照 schema.md 的 Deriving current state（同一 question 以最後一條 status 行為準，reopened 折回 pending；同一 question_id 以 answers.jsonl 最後一行為準）。",
-    "條目有非空字串 rationale 欄位時，該條 sign-off question 的 body 為 rationale 內容＋空行＋acceptance 列表（整體仍受 8KB 行上限的 clip 保護）；rationale 缺漏、非字串或為空字串時，body 與現行為完全相同。docstring 的 assumed format 段落記載 rationale 為選填欄位。",
-    "docstring 與新行為零矛盾：Idempotent 段改述為上面第 2 條的完整去重規則（不再只寫 pending）；assumed format 的 status 說明補上 closed 與帶 superseded_by 的條目會被整條跳過。逐字讀這兩段與 acceptance 第 1、2 條無矛盾即過。",
-    "legacy 條目（status failing 且無 signed_off 欄位）行為不變：忽略並在 stderr 通知，docstring 該段不刪。",
-    "新增 tests/test_example_collector.py（stdlib unittest，BRIEF_HOME 指向暫存目錄，絕不碰真實 ~/.agent-brief）至少涵蓋：pending 跳過、answered-unconsumed 跳過、answered-consumed 重投、cancelled 重投、superseded_by 與 closed 跳過、rationale 進 body、無 rationale body 不變、legacy 忽略。python tests/test_example_collector.py 全綠，python tests/test_concurrent_append.py 維持全綠。",
-    "範例檔與測試全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）；docs/schema.md 本條不修改。"
-   ],
-   "touches": ["examples/feature-list-collector.py", "tests/test_example_collector.py"]
-  }
- ]
+ "features": []
 }

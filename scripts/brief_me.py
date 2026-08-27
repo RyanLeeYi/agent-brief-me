@@ -498,8 +498,17 @@ _OPENED_WINDOW_RE = re.compile(r"^(.+): opened in new window$")
 def _api_state(brief_home):
     """GET /api/state: like `load` but never runs the collector
     (collector_warning is always null), plus `projects`,
-    `unconsumed_counts`, and `dismissed` for the Web UI."""
+    `unconsumed_counts`, and `dismissed` for the Web UI.
+
+    F33: also runs F24's requeue (previously CLI `load`-only), so a Web
+    user's answer eaten by a session that died before filing a report or
+    exiting gets requeued too. Same call as `_cmd_load`; idempotent via
+    `_requeue_stale_batches`'s own `requeued`-line dedup, so a GET-driven
+    poll never double-requeues."""
+    requeued = _requeue_stale_batches(brief_home)  # F24/F33, before _state()
+    # so unconsumed_projects/unconsumed_counts reflect what was just requeued.
     payload, questions, q_last_status, answers_by_question = _state(brief_home, None)
+    payload["requeued"] = requeued
 
     dismissed_by_project = defaultdict(list)
     for qid, q in questions.items():
@@ -885,10 +894,12 @@ def _task_qa_view(task, project, resolved, questions, answers_by_question):
 def sessions_view(path, projects_by_path, reports=None, questions=None,
                    q_last_status=None, answers_by_question=None):
     """GET /api/state's `sessions` field (F14): {running: [...], finished:
-    [...], finished_hidden: N, finished_counts: {report, killed}} (N =
-    batches whose finished_at is older than SESSION_WINDOW_SECONDS;
+    [...], finished_hidden: N, finished_counts: {report, killed, unknown}}
+    (N = batches whose finished_at is older than SESSION_WINDOW_SECONDS;
     finished_counts is a tally of `finished`'s outcome field, F20, with
-    "killed" including "ctrl_c"). `running` uses the same alive-batch
+    "killed" including "ctrl_c"; "unknown" (F33) is an exit_codes entry
+    that is JSON null - the death was never observed, e.g. the agent-brief
+    service itself was stopped mid-session). `running` uses the same alive-batch
     condition as running_sessions(); `finished` is sorted newest-first. A
     `started` record with no `tasks` key (written before this field existed)
     folds to []. Each `finished` row also carries F20's `outcome` and
@@ -977,12 +988,14 @@ def sessions_view(path, projects_by_path, reports=None, questions=None,
                 "report_note": _report_note(report_summary) if report_id else None,
             })
     finished.sort(key=lambda s: s["finished_at"], reverse=True)
-    finished_counts = {"report": 0, "killed": 0}
+    finished_counts = {"report": 0, "killed": 0, "unknown": 0}
     for row in finished:
         if row["outcome"] == "report":
             finished_counts["report"] += 1
         elif row["outcome"] in ("killed", "ctrl_c"):
             finished_counts["killed"] += 1
+        elif row["outcome"] == "unknown":
+            finished_counts["unknown"] += 1
     return {"running": running, "finished": finished, "finished_hidden": hidden,
             "finished_counts": finished_counts}
 

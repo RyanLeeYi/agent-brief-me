@@ -311,6 +311,10 @@
   .badge-outcome-report{ background:var(--accent-bg); color:var(--accent); }
   .badge-outcome-killed{ background:var(--danger); color:#fff; }
   .badge-outcome-ctrlc{ background:var(--warning); color:#fff; }
+  /* F33: exit code was never observed (e.g. agent-brief itself was
+     stopped mid-session) - distinct from the plain "ok"/"exit" badges so
+     it doesn't read as a clean finish. */
+  .badge-outcome-unknown{ background:rgba(210,153,34,0.14); color:var(--warning); }
   .badge svg{ vertical-align:-1px; margin-right:2px; }
   .text-danger{ color:var(--danger-2); }
   #sessions-finished-hidden{ color:var(--text-muted); font-size:12px; margin-left:auto; }
@@ -1469,7 +1473,9 @@
       case 'ctrl_c': return '<span class="badge badge-outcome-ctrlc">' + OUTCOME_ICON_BANG + ' CTRL-C</span>';
       case 'ok': return '<span class="badge">Exit 0</span>';
       case 'exit': return '<span class="badge">Exit ' + escapeHtml(s.exit_code) + '</span>';
-      default: return '<span class="badge">unknown</span>';
+      // F33: exit code never observed - not "ok", so a distinct style.
+      case 'unknown': return '<span class="badge badge-outcome-unknown">UNKNOWN</span>';
+      default: return '<span class="badge badge-outcome-unknown">UNKNOWN</span>';
     }
   }
 
@@ -1586,11 +1592,11 @@
   }
 
   function renderSessions() {
-    var sessions = state.data.sessions || { running: [], finished: [], finished_hidden: 0, finished_counts: { report: 0, killed: 0 } };
+    var sessions = state.data.sessions || { running: [], finished: [], finished_hidden: 0, finished_counts: { report: 0, killed: 0, unknown: 0 } };
     var running = sessions.running || [];
     var finished = sessions.finished || [];
     var hidden = sessions.finished_hidden || 0;
-    var counts = sessions.finished_counts || { report: 0, killed: 0 };
+    var counts = sessions.finished_counts || { report: 0, killed: 0, unknown: 0 };
     var totalEmpty = running.length === 0 && finished.length === 0;
 
     sessionsEmptyEl.hidden = !totalEmpty;
@@ -1603,7 +1609,8 @@
     sessionsFinishedCountEl.textContent = finished.length;
     sessionsFinishedListEl.innerHTML = finished.map(sessionFinishedRowHTML).join('');
     sessionsFinishedHiddenEl.textContent =
-      counts.report + ' reported · ' + counts.killed + ' killed · older hidden: ' + hidden;
+      counts.report + ' reported · ' + counts.killed + ' killed · ' + (counts.unknown || 0) +
+      ' unknown · older hidden: ' + hidden;
   }
 
   function onSessionsFinishedClick(e) {

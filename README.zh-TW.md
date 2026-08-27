@@ -123,6 +123,17 @@ Report 收合成一列（專案、`F12 passing` 這類 feature 晶片、摘要�
 - **Running** - 每個進行中的 worker：專案、派給它的任務、經過時間。
 - **Finished** - 歷史 worker 的表格：結果徽章（`report` / `killed` / `ctrl-c`）、任務、耗時，以及同一顆點擊複製的 `claude --resume` 按鈕，可重開任何一場。
 
+### Settings 檢視
+
+側欄的 **Settings** 顯示 `config.json` 現值，並讓你就地編輯一小組白名單 `dispatch` 欄位：`watch`、`model`、
+`context_model`、`context_language`、`plain_language`、`delegate`。回覆語言是下拉選單（不指定／繁體中文／簡體
+中文／English／日本語）加一個「技術術語保留英文」checkbox，兩者組合成 `context_language` 存的單一字串（例如
+`Traditional Chinese (keep technical terms in English)`）；下拉選單解不回的值會顯示為「Custom」，只要不刻意改動
+語言選擇就保留原值不覆寫。儲存會就地重寫 `config.json` - 下一次派工（含補脈絡 refill）立刻讀到新值，不需要重啟
+serve。`projects`、`collector`、`notify`、`permission_mode`、`allowed_tools` 唯讀顯示：這個檢視走的是本機、無驗
+證的 API，不能讓瀏覽器分頁觸發指令執行（`collector`／`notify` 會跑任意 argv 陣列）或升級自己的權限。要改這些欄
+位請直接編輯 `config.json`。
+
 ## 派工設定
 
 `scripts/dispatch.py` 開 worker 時讀 `~/.agent-brief/config.json` 的 `dispatch` 區塊：

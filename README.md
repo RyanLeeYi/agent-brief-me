@@ -124,6 +124,19 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
 - **Running** - each live worker with its project, the tasks it was sent, and elapsed time.
 - **Finished** - a table of past workers: outcome badge (`report` / `killed` / `ctrl-c`), tasks, duration, and the same click-to-copy `claude --resume` button to reopen any of them.
 
+### Settings view
+
+The sidebar's **Settings** entry shows `config.json`'s current value and lets you edit a small whitelist of
+`dispatch` fields in place: `watch`, `model`, `context_model`, `context_language`, `plain_language`, and `delegate`.
+Reply language is a dropdown (not specified / Traditional Chinese / Simplified Chinese / English / Japanese) plus a
+"keep technical terms in English" checkbox, which together compose into the single string `context_language` holds
+(e.g. `Traditional Chinese (keep technical terms in English)`); a value the dropdown cannot parse back shows as
+"Custom" and is left untouched unless you deliberately change the language selection. Saving rewrites `config.json`
+in place - the next dispatch (including a context-refill) picks up the new value with no restart needed.
+`projects`, `collector`, `notify`, `permission_mode`, and `allowed_tools` are shown read-only: this view talks to a
+local, unauthenticated API, so it must not let a browser tab trigger command execution (`collector`/`notify` run
+arbitrary argv arrays) or escalate its own permissions. Edit those fields directly in `config.json` instead.
+
 ## Dispatch settings
 
 `scripts/dispatch.py` reads the `dispatch` object in `~/.agent-brief/config.json` when launching workers:

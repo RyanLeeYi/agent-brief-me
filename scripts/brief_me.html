@@ -71,15 +71,15 @@
   #dismissed-entry:hover{ background:var(--bg-card); }
   #dismissed-entry.active{ background:var(--accent-bg); color:var(--accent); }
 
-  #sessions-entry{
+  #sessions-entry, #settings-entry{
     display:flex; align-items:center; justify-content:space-between;
     width:calc(100% - 16px); margin:0 8px 8px;
     min-height:36px; padding:6px 10px; border-radius:var(--radius);
     text-align:left; color:var(--text-secondary); cursor:pointer;
     transition:background var(--transition), color var(--transition);
   }
-  #sessions-entry:hover{ background:var(--bg-card); }
-  #sessions-entry.active{ background:var(--accent-bg); color:var(--accent); }
+  #sessions-entry:hover, #settings-entry:hover{ background:var(--bg-card); }
+  #sessions-entry.active, #settings-entry.active{ background:var(--accent-bg); color:var(--accent); }
   #sessions-count{ font-size:12px; color:var(--text-muted); }
   #sessions-entry.active #sessions-count{ color:var(--accent); }
 
@@ -293,6 +293,27 @@
   .text-danger{ color:var(--danger-2); }
   #sessions-finished-hidden{ color:var(--text-muted); font-size:12px; margin-left:auto; }
 
+  /* ---------- settings view (F30) ---------- */
+  #settings-view .question-card{ max-width:520px; margin-bottom:20px; }
+  .settings-field{ margin-bottom:16px; }
+  .settings-field:last-of-type{ margin-bottom:20px; }
+  .settings-label{
+    display:block; font-size:11px; font-weight:600; text-transform:uppercase;
+    letter-spacing:0.03em; color:var(--text-muted); margin-bottom:6px;
+  }
+  .settings-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .settings-row select, .settings-row .other-input{ flex:0 0 auto; width:auto; min-width:160px; }
+  .settings-readonly-list{ margin:0; }
+  .settings-readonly-list dt{
+    font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em;
+    color:var(--text-muted); margin-top:12px;
+  }
+  .settings-readonly-list dt:first-child{ margin-top:0; }
+  .settings-readonly-list dd{
+    margin:2px 0 0; color:var(--text-secondary); font-family:'IBM Plex Mono', Consolas, monospace;
+    font-size:13px; word-break:break-word;
+  }
+
   /* ---------- toast ---------- */
   #toast-container{ position:fixed; right:24px; bottom:24px; display:flex; flex-direction:column; gap:8px; z-index:1000; }
   .toast{
@@ -371,6 +392,7 @@
     <div id="project-list" role="list"></div>
     <button id="dismissed-entry" type="button"></button>
     <button id="sessions-entry" type="button"><span>Sessions</span><span id="sessions-count"></span></button>
+    <button id="settings-entry" type="button"><span>Settings</span></button>
     <div id="answers-panel">
       <div id="unsaved-count">0 unsaved</div>
       <div id="answers-projects"></div>
@@ -455,6 +477,61 @@
         </section>
         <p class="empty-state" id="sessions-empty" hidden>No sessions.</p>
       </div>
+
+      <div id="settings-view" hidden>
+        <div class="question-card" id="settings-editable-card">
+          <h3 class="card-title">Dispatch settings</h3>
+          <div class="settings-field">
+            <label class="settings-label">Show a terminal window</label>
+            <label class="dispatch-row">
+              <input type="checkbox" id="settings-watch">
+              <span>--watch (opens a visible window per project instead of headless)</span>
+            </label>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label">Model for worker sessions</label>
+            <input type="text" class="other-input" id="settings-model" placeholder="(Claude Code default)">
+          </div>
+          <div class="settings-field">
+            <label class="settings-label">Model for context-refill sessions</label>
+            <input type="text" class="other-input" id="settings-context-model" placeholder="sonnet">
+          </div>
+          <div class="settings-field">
+            <label class="settings-label">Reply language</label>
+            <div class="settings-row">
+              <select id="settings-language" class="other-input"></select>
+              <label class="dispatch-row" id="settings-keep-terms-row">
+                <input type="checkbox" id="settings-keep-terms">
+                <span>Keep technical terms in English</span>
+              </label>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label">Plain language</label>
+            <select id="settings-plain-language" class="other-input">
+              <option value="off">Off</option>
+              <option value="refill">Add context only</option>
+              <option value="all">Apply globally</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label class="dispatch-row">
+              <input type="checkbox" id="settings-delegate">
+              <span>Workers may delegate to subagents</span>
+            </label>
+          </div>
+          <button type="button" class="btn btn-primary" id="settings-save-btn">Save settings</button>
+        </div>
+
+        <div class="question-card" id="settings-readonly-card">
+          <h3 class="card-title">Read-only</h3>
+          <p class="answers-note">
+            These fields need a direct edit to config.json: an unauthenticated local API must not expose
+            command execution (collector/notify run arbitrary argv arrays) or permission-escalating settings.
+          </p>
+          <dl class="settings-readonly-list" id="settings-readonly-list"></dl>
+        </div>
+      </div>
     </div>
   </main>
 </div>
@@ -519,6 +596,19 @@
   var sessionsFinishedHiddenEl = document.getElementById('sessions-finished-hidden');
   var sessionsEmptyEl = document.getElementById('sessions-empty');
 
+  var settingsEntryEl = document.getElementById('settings-entry');
+  var settingsViewEl = document.getElementById('settings-view');
+  var settingsWatchEl = document.getElementById('settings-watch');
+  var settingsModelEl = document.getElementById('settings-model');
+  var settingsContextModelEl = document.getElementById('settings-context-model');
+  var settingsLanguageEl = document.getElementById('settings-language');
+  var settingsKeepTermsRowEl = document.getElementById('settings-keep-terms-row');
+  var settingsKeepTermsEl = document.getElementById('settings-keep-terms');
+  var settingsPlainLanguageEl = document.getElementById('settings-plain-language');
+  var settingsDelegateEl = document.getElementById('settings-delegate');
+  var settingsSaveBtnEl = document.getElementById('settings-save-btn');
+  var settingsReadonlyListEl = document.getElementById('settings-readonly-list');
+
   var toastContainerEl = document.getElementById('toast-container');
   var confirmOverlayEl = document.getElementById('confirm-overlay');
   var confirmListEl = document.getElementById('confirm-list');
@@ -528,13 +618,16 @@
   // -------------------------------------------------------------- state ----
   var state = {
     data: emptyState(),
-    view: 'inbox',            // 'inbox' | 'dismissed' | 'sessions'
+    view: 'inbox',            // 'inbox' | 'dismissed' | 'sessions' | 'settings'
     currentProject: '__all__',
     selections: {},            // question id -> per-question UI record ("qui")
     reportsReadLocally: {},    // report id -> true, once /api/read has been posted this page life
     collapsed: { questions: false, reports: false },
     dismissedFilter: { project: '__all__', query: '' }
   };
+
+  // F30: config.json's current value, loaded fresh every time Settings is opened.
+  var settingsState = { config: null };
 
   function emptyState() {
     return {
@@ -862,6 +955,7 @@
     inboxViewEl.hidden = state.view !== 'inbox';
     dismissedViewEl.hidden = state.view !== 'dismissed';
     sessionsViewEl.hidden = state.view !== 'sessions';
+    settingsViewEl.hidden = state.view !== 'settings';
     if (state.view === 'inbox') {
       renderQuestions();
       renderReports();
@@ -869,6 +963,8 @@
       renderDismissedView();
     } else if (state.view === 'sessions') {
       renderSessions();
+    } else if (state.view === 'settings') {
+      renderSettingsView();
     }
     updateAnswersPanel();
   }
@@ -917,6 +1013,7 @@
     var runningSessions = (state.data.sessions && state.data.sessions.running) || [];
     sessionsCountEl.textContent = runningSessions.length > 0 ? runningSessions.length + ' running' : '';
     sessionsEntryEl.classList.toggle('active', state.view === 'sessions');
+    settingsEntryEl.classList.toggle('active', state.view === 'settings');
   }
 
   function renderQuestions() {
@@ -1445,6 +1542,131 @@
     }
   }
 
+  // ------------------------------------------------------------ settings ----
+  // F30: dispatch.context_language's five presets, matching brief-init's
+  // dispatch-settings walkthrough exactly so a value set by either UI parses
+  // back into the same dropdown state in the other.
+  var LANGUAGE_PRESETS = [
+    { value: '', label: 'Not specified' },
+    { value: 'Traditional Chinese', label: 'Traditional Chinese' },
+    { value: 'Simplified Chinese', label: 'Simplified Chinese' },
+    { value: 'English', label: 'English' },
+    { value: 'Japanese', label: 'Japanese' }
+  ];
+  var KEEP_TERMS_SUFFIX = ' (keep technical terms in English)';
+
+  function composeContextLanguage(base, keepTerms) {
+    if (!base) return null;
+    return keepTerms ? base + KEEP_TERMS_SUFFIX : base;
+  }
+  // Returns {base, keepTerms, custom}: `custom` is the raw string when it
+  // does not match any preset (+ optional suffix) combination, else null.
+  function parseContextLanguage(value) {
+    if (value == null || value === '') return { base: '', keepTerms: false, custom: null };
+    for (var i = 0; i < LANGUAGE_PRESETS.length; i++) {
+      var base = LANGUAGE_PRESETS[i].value;
+      if (!base) continue;
+      if (value === base) return { base: base, keepTerms: false, custom: null };
+      if (value === base + KEEP_TERMS_SUFFIX) return { base: base, keepTerms: true, custom: null };
+    }
+    return { base: null, keepTerms: false, custom: value };
+  }
+
+  function updateKeepTermsEnabled() {
+    var val = settingsLanguageEl.value;
+    var disable = (val === '' || val === 'English' || val === '__custom__');
+    settingsKeepTermsEl.disabled = disable;
+    settingsKeepTermsRowEl.classList.toggle('disabled', disable);
+    if (disable) settingsKeepTermsEl.checked = false;
+  }
+
+  function loadSettings() {
+    return apiGet('/api/config').then(function (config) {
+      settingsState.config = config;
+      renderSettingsView();
+    }).catch(function (err) {
+      toast('Failed to load settings: ' + err.message, 'error');
+    });
+  }
+
+  function renderSettingsView() {
+    var config = settingsState.config || {};
+    var d = config.dispatch || {};
+
+    settingsWatchEl.checked = !!d.watch;
+    settingsModelEl.value = d.model || '';
+    settingsContextModelEl.value = d.context_model || '';
+    settingsDelegateEl.checked = !!d.delegate;
+    settingsPlainLanguageEl.value = (d.plain_language === 'all' || d.plain_language === 'refill') ? d.plain_language : 'off';
+
+    if (!settingsLanguageEl.options.length) {
+      settingsLanguageEl.innerHTML = LANGUAGE_PRESETS.map(function (p) {
+        return '<option value="' + escapeHtml(p.value) + '">' + escapeHtml(p.label) + '</option>';
+      }).join('');
+    }
+    var customOptionEl = settingsLanguageEl.querySelector('option[value="__custom__"]');
+    var parsed = parseContextLanguage(d.context_language);
+    if (parsed.custom != null) {
+      if (!customOptionEl) {
+        customOptionEl = document.createElement('option');
+        customOptionEl.value = '__custom__';
+        settingsLanguageEl.appendChild(customOptionEl);
+      }
+      customOptionEl.textContent = 'Custom: ' + parsed.custom;
+      settingsLanguageEl.value = '__custom__';
+    } else {
+      if (customOptionEl) customOptionEl.remove();
+      settingsLanguageEl.value = parsed.base;
+      settingsKeepTermsEl.checked = parsed.keepTerms;
+    }
+    updateKeepTermsEnabled();
+
+    var readonlyRows = [
+      ['Projects', (config.projects || []).map(function (p) { return p.name; }).join(', ') || '(none)'],
+      ['Collector', config.collector ? JSON.stringify(config.collector) : 'null'],
+      ['Notify', config.notify ? JSON.stringify(config.notify) : 'null'],
+      ['Permission mode', d.permission_mode || 'auto'],
+      ['Allowed tools', d.allowed_tools || '(default)']
+    ];
+    settingsReadonlyListEl.innerHTML = readonlyRows.map(function (pair) {
+      return '<dt>' + escapeHtml(pair[0]) + '</dt><dd>' + escapeHtml(pair[1]) + '</dd>';
+    }).join('');
+  }
+
+  function currentContextLanguageValue() {
+    // The virtual "__custom__" option always means "resend the original
+    // string verbatim" - it is never recomposed from base+checkbox, which
+    // is what preserves a custom value the dropdown cannot round-trip.
+    if (settingsLanguageEl.value === '__custom__') {
+      var d = (settingsState.config && settingsState.config.dispatch) || {};
+      return d.context_language != null ? d.context_language : null;
+    }
+    return composeContextLanguage(settingsLanguageEl.value, settingsKeepTermsEl.checked);
+  }
+
+  function handleSettingsSave() {
+    var body = { dispatch: {
+      watch: settingsWatchEl.checked,
+      model: settingsModelEl.value.trim() || null,
+      context_model: settingsContextModelEl.value.trim() || null,
+      delegate: settingsDelegateEl.checked,
+      plain_language: settingsPlainLanguageEl.value,
+      context_language: currentContextLanguageValue()
+    }};
+    settingsSaveBtnEl.disabled = true;
+    apiPost('/api/config', body).then(function () {
+      toast('Settings saved.', 'info');
+      return loadSettings();
+    }).catch(function (err) {
+      toast('Save failed: ' + err.message, 'error');
+    }).then(function () {
+      settingsSaveBtnEl.disabled = false;
+    });
+  }
+
+  settingsLanguageEl.addEventListener('change', updateKeepTermsEnabled);
+  settingsSaveBtnEl.addEventListener('click', handleSettingsSave);
+
   // ------------------------------------------------------------- events ----
   var appEl = document.getElementById('app');
   var sidebarToggleEl = document.getElementById('sidebar-toggle');
@@ -1479,6 +1701,12 @@
   sessionsEntryEl.addEventListener('click', function () {
     state.view = 'sessions';
     renderApp();
+    if (isMobile()) closeDrawer();
+  });
+  settingsEntryEl.addEventListener('click', function () {
+    state.view = 'settings';
+    renderApp();
+    loadSettings();
     if (isMobile()) closeDrawer();
   });
 

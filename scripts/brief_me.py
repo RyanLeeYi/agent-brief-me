@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -997,6 +998,78 @@ def _validate_answer_body(body, questions):
     return None
 
 
+# F30: the only config.json fields the Settings view may write. Everything
+# else (projects, collector, notify, dispatch.permission_mode,
+# dispatch.allowed_tools) is read-only here - an unauthenticated local API
+# must not expose command execution (collector/notify are argv arrays) or
+# permission-escalating settings.
+_PLAIN_LANGUAGE_VALUES = ("all", "refill", "off")
+CONFIG_WRITABLE_DISPATCH_FIELDS = {
+    "watch": bool,
+    "delegate": bool,
+    "model": (str, type(None)),
+    "context_model": (str, type(None)),
+    "context_language": (str, type(None)),
+    "plain_language": str,
+}
+
+
+def _validate_config_patch(body):
+    """Returns an error string, or None if `body` is a valid POST /api/config
+    request (F30): only a top-level "dispatch" key, holding only the
+    whitelisted fields above, each of the right type (plain_language is
+    further restricted to its three known values). Checked in full before
+    any write happens, same discipline as _validate_answer_body."""
+    if not isinstance(body, dict):
+        return "body must be a JSON object"
+    unknown_top = [k for k in body if k != "dispatch"]
+    if unknown_top:
+        return f"unknown field: {unknown_top[0]}"
+    patch = body.get("dispatch", {})
+    if not isinstance(patch, dict):
+        return "dispatch must be an object"
+    for key, value in patch.items():
+        expected = CONFIG_WRITABLE_DISPATCH_FIELDS.get(key)
+        if expected is None:
+            return f"unknown or read-only field: dispatch.{key}"
+        if not isinstance(value, expected):
+            return f"dispatch.{key} has the wrong type"
+        if key == "plain_language" and value not in _PLAIN_LANGUAGE_VALUES:
+            return f"dispatch.plain_language must be one of {_PLAIN_LANGUAGE_VALUES}"
+    return None
+
+
+def _apply_config_patch(brief_home, patch):
+    """Atomically rewrite config.json (F30) with `patch` merged into its
+    existing `dispatch` object: temp file + os.replace, same technique
+    dispatch.py's ensure_trusted() uses for claude.json - config.json is a
+    single JSON document, not an append-only JSONL file, so the atomic
+    append rule does not apply here. Every top-level key besides `dispatch`,
+    and every dispatch.* key outside the F30 whitelist, is preserved
+    byte-for-byte (re-serialized, not re-ordered-checked, but never
+    dropped)."""
+    path = os.path.join(brief_home, "config.json")
+    config = load_config(brief_home)
+    if not isinstance(config, dict):
+        config = {}
+    existing_dispatch = config.get("dispatch")
+    if not isinstance(existing_dispatch, dict):
+        existing_dispatch = {}
+    config["dispatch"] = {**existing_dispatch, **patch}
+
+    fd, tmp_path = tempfile.mkstemp(dir=brief_home, prefix=".config-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 class BriefHTTPHandler(BaseHTTPRequestHandler):
     """127.0.0.1-only backend for scripts/brief_me.html (F9). GET / serves
     the html file; GET/POST /api/* implement the F8 API contract."""
@@ -1049,6 +1122,8 @@ class BriefHTTPHandler(BaseHTTPRequestHandler):
                 self._serve_index()
             elif path == "/api/state":
                 self._json(200, _api_state(get_brief_home()))
+            elif path == "/api/config":
+                self._json(200, load_config(get_brief_home()))
             else:
                 self._json(404, {"ok": False, "error": "not found"})
         except Exception as exc:
@@ -1063,6 +1138,7 @@ class BriefHTTPHandler(BaseHTTPRequestHandler):
                 "/api/answer": self._post_answer,
                 "/api/reopen": self._post_reopen,
                 "/api/refill": self._post_refill,
+                "/api/config": self._post_config,
             }.get(path)
             if handler is None:
                 self._json(404, {"ok": False, "error": "not found"})
@@ -1136,6 +1212,24 @@ class BriefHTTPHandler(BaseHTTPRequestHandler):
             return
         result = _run_refill(get_brief_home(), qid)
         self._json(200 if result.get("ok") else 400, result)
+
+    def _post_config(self):
+        """POST /api/config {"dispatch": {...whitelisted fields...}} (F30):
+        rewrite config.json's dispatch settings. Any unknown top-level key,
+        unknown/read-only dispatch.* key, or wrong-typed value is a 400 with
+        no write at all; a valid patch is applied atomically and the current
+        (post-write) config is echoed back."""
+        body, err = self._read_json_body()
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+        err = _validate_config_patch(body)
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+        brief_home = get_brief_home()
+        _apply_config_patch(brief_home, body.get("dispatch", {}))
+        self._json(200, {"ok": True, "config": load_config(brief_home)})
 
     def _post_answer(self):
         body, err = self._read_json_body()

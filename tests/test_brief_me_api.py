@@ -748,6 +748,99 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(data.get("refilling_questions", {}), {})
         self.assertEqual(data["pending_questions"]["demo"][0]["id"], qid)
 
+    # -- F30: Settings GET/POST /api/config ----------------------------------
+    def test_get_config_returns_full_config_including_readonly_fields(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}], collector=["echo", "hi"])
+        status, data = self._get("/api/config")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["projects"], [{"name": "demo", "path": self.home}])
+        self.assertEqual(data["collector"], ["echo", "hi"])
+
+    def test_post_config_whitelisted_roundtrip(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        status, data = self._post("/api/config", {"dispatch": {
+            "watch": True, "model": "opus", "context_model": "haiku",
+            "context_language": "Traditional Chinese (keep technical terms in English)",
+            "plain_language": "all", "delegate": True,
+        }})
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+
+        _, config = self._get("/api/config")
+        self.assertEqual(config["dispatch"]["watch"], True)
+        self.assertEqual(config["dispatch"]["model"], "opus")
+        self.assertEqual(config["dispatch"]["context_model"], "haiku")
+        self.assertEqual(config["dispatch"]["context_language"],
+                         "Traditional Chinese (keep technical terms in English)")
+        self.assertEqual(config["dispatch"]["plain_language"], "all")
+        self.assertEqual(config["dispatch"]["delegate"], True)
+
+    def test_post_config_rejects_unknown_key_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        with open(os.path.join(self.home, "config.json"), encoding="utf-8") as f:
+            before = f.read()
+
+        status, data = self._post("/api/config", {"dispatch": {"permission_mode": "bypassPermissions"}})
+
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        with open(os.path.join(self.home, "config.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_post_config_rejects_wrong_type_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        with open(os.path.join(self.home, "config.json"), encoding="utf-8") as f:
+            before = f.read()
+
+        status, data = self._post("/api/config", {"dispatch": {"watch": "yes"}})
+
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        with open(os.path.join(self.home, "config.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_post_config_rejects_invalid_plain_language_value_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        with open(os.path.join(self.home, "config.json"), encoding="utf-8") as f:
+            before = f.read()
+
+        status, data = self._post("/api/config", {"dispatch": {"plain_language": "loudly"}})
+
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        with open(os.path.join(self.home, "config.json"), encoding="utf-8") as f:
+            self.assertEqual(f.read(), before)
+
+    def test_post_config_preserves_unknown_existing_keys(self):
+        config = {"projects": [{"name": "demo", "path": self.home}], "collector": None,
+                  "notify": None, "dispatch": {"permission_mode": "auto", "allowed_tools": "Bash,Read",
+                                               "future_key": "keep-me"},
+                  "another_future_top_level_key": 42}
+        with open(os.path.join(self.home, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(config, f)
+
+        status, data = self._post("/api/config", {"dispatch": {"watch": True}})
+        self.assertEqual(status, 200)
+
+        _, current = self._get("/api/config")
+        self.assertEqual(current["another_future_top_level_key"], 42)
+        self.assertEqual(current["dispatch"]["permission_mode"], "auto")
+        self.assertEqual(current["dispatch"]["allowed_tools"], "Bash,Read")
+        self.assertEqual(current["dispatch"]["future_key"], "keep-me")
+        self.assertEqual(current["dispatch"]["watch"], True)
+
+    def test_post_config_then_dispatch_reads_new_value(self):
+        """F30 acceptance #3: next dispatch (including refill) uses the new
+        value with no serve restart - dispatch.py always reloads config.json
+        from disk, so this only needs to prove the write landed."""
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        self._post("/api/config", {"dispatch": {"context_model": "haiku"}})
+
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+        import dispatch  # noqa: E402
+        reloaded = dispatch.load_config(self.home)
+        self.assertEqual(dispatch.context_model_for(reloaded), "haiku")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -2,5 +2,56 @@
  "project": "agent-brief-me",
  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
  "archive": "docs/archive/features.jsonl",
- "features": []
+ "features": [
+  {
+   "id": "F29",
+   "name": "refill 進行中的 question 進 waiting 區＋重投卡語言設定",
+   "status": "failing",
+   "rationale": "F28 上線後的兩個使用回饋：(1) 按下 Add context 後原卡仍留在可作答清單，會重複按（server 端 dedup 擋得住 spawn，但 UX 上看起來沒反應）；(2) 重投卡的語言由 refill session 自行決定，審核者要能指定（例如 zh-TW）。取捨：waiting 用純推導不寫 status 行——若按下即 cancel，refill session 死掉沒重投時原卡會直接蒸發；推導自 dispatches.jsonl 的進行中判準則自癒（session 死了卡自動回 pending）。語言預設 null＝不指定，開源預設不強加語言。",
+   "acceptance": [
+    "Web UI：pending question 若有進行中的 refill batch（判準與既有 dedup 相同：該卡的 refill started 行無對應 finished 且 pid 存活），從可作答清單移除，改為等待呈現（設計稿 State 2）：refilling badge（warning 色）、卡片左緣 warning 色 3px 邊條、標題保留、一句說明脈絡補充中並指向 Sessions、started elapsed，無任何作答／Add context／Dismiss 按鈕；batch 結束（finished 或 pid 死亡）而該卡仍 pending 時，自動回到可作答清單。全程不寫入 inbox.jsonl／answers.jsonl 任何行，狀態純由既有檔案折疊推導。",
+    "Add context 按鈕重新設計（設計稿 State 1）：自 card footer 的文字連結移除，改為選項列最右側（margin-left auto）的帶圖示按鈕，樣式同 opt-btn 家族、圖示為 warning 色 info 圈、label 為 Need more context；footer 只剩 resume 指令與 Dismiss。",
+    "支撐第 1 條的資料由 GET /api/state 提供（既有回應加欄位或 pending 條目加旗標皆可），前端不自行讀 dispatches.jsonl。",
+    "brief-me SKILL.md 的逐題審核流程：refill 進行中的 question 本輪不出題，摘要提及被略過的數量。",
+    "config.json 新增 dispatch.context_language：自由字串（語言描述，如 \"Traditional Chinese (keep technical terms in English)\"）或 null，缺鍵預設 null。有值時 refill prompt 加一句要求重投卡的 title 與 body 以該描述的語言撰寫；null 時 prompt 與 F28 現行為完全相同。README.md 與 README.zh-TW.md 的 config 表各補一列（英文為準，中文同步）；brief-init SKILL.md 的 dispatch 設定訪談新增一問（預設 null，選項比照 F30 的下拉：不指定／繁體中文／簡體中文／English／日本語，各可加註技術術語保留英文），答案寫進 dispatch.context_language。",
+    "config.json 新增 dispatch.plain_language：\"all\"、\"refill\"、\"off\" 三值，缺鍵或其他值一律視為 \"off\"。\"refill\" 與 \"all\" 時 refill prompt 加一句要求重投卡以白話撰寫（面向非技術讀者、避免術語）；\"all\" 時一般 dispatch 的 worker prompt 也加一句要求其透過 brief-submit 投遞的 question 與 report 以白話撰寫，且 dispatch.context_language 有值時該句一併要求以該描述的語言撰寫（語言永遠來自 context_language，白話句本身不得寫死任何語言）；\"off\" 時兩處 prompt 與現行為完全相同。README 兩份 config 表各補一列；brief-init 訪談新增一問（預設 off）。",
+    "新增或擴充 tests（stdlib unittest，BRIEF_HOME 暫存目錄，不碰真實 ~/.agent-brief、不真的 spawn claude）至少涵蓋：進行中 refill 使該卡從 state API 的可作答 pending 移入等待呈現的資料、pid 死亡後回到可作答、context_language 有值時 prompt 含該語言要求、null 時 prompt 不變。既有測試全綠。",
+    "新增與修改的對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
+   ],
+   "touches": [
+    "scripts/dispatch.py",
+    "scripts/brief_me.py",
+    "scripts/brief_me.html",
+    "skills/brief-me/SKILL.md",
+    "skills/brief-init/SKILL.md",
+    "README.md",
+    "README.zh-TW.md",
+    "tests/test_refill_dispatch.py",
+    "tests/test_brief_me_api.py"
+   ],
+   "signed_off": true
+  },
+  {
+   "id": "F30",
+   "name": "Web UI 設定頁：白名單欄位可線上改寫 config.json",
+   "status": "failing",
+   "rationale": "dispatch 設定目前只能手改 config.json 或重跑 brief-init（幾千 token）。做 Web UI 設定頁，但 API 無認證且綁 VPN 位址，全量開放等於把 permission_mode（可升 bypassPermissions）與 collector／notify（argv＝任意指令執行）曝露在無認證 HTTP 上——因此採白名單：只開無害旋鈕，危險欄位唯讀＋註明手改。取捨：不做認證層（超出本條範圍、且 127.0.0.1／信任網段的前提已在 README 寫明），用「縮小可寫面」代替。",
+   "acceptance": [
+    "Web UI 新增 Settings 檢視（側欄可達）：顯示 config.json 現值；可編輯欄位僅 dispatch.watch（布林）、dispatch.model（字串或 null）、dispatch.context_model（字串或 null）、dispatch.context_language、dispatch.plain_language（all／refill／off）、dispatch.delegate（布林）。context_language 的編輯介面是下拉選單（不指定＝null／繁體中文／簡體中文／English／日本語）加「技術術語保留英文」checkbox（選 English 或不指定時 disabled），儲存時組合成單一英文描述字串（如 Traditional Chinese (keep technical terms in English)）寫入 config；載入時能把這些預設組合字串折回選單與 checkbox 狀態，折不回的自訂字串顯示為 custom 並在未改動時保留原值不覆寫。Plain language 是獨立下拉選單（Apply globally／Add context only／Off，寫入 dispatch.plain_language 的 all／refill／off），與語言選單各自獨立。UI 不顯示逐項列舉可選語言的說明文字。projects、collector、notify、dispatch.permission_mode、dispatch.allowed_tools 唯讀顯示，並帶一句說明這些欄位需手動編輯 config.json（含原因：無認證 API 不開放指令執行與權限升級類設定）。",
+    "新增 GET 端點回傳現行 config（含唯讀欄位）與 POST 端點只接受白名單欄位：未知鍵、白名單外的鍵、型別錯誤一律 400 且完全不寫入；合法寫入以整份重寫實現（temp 檔＋原子 replace，非 append），config.json 中白名單外的既有鍵與未知鍵逐字保留。",
+    "儲存成功後 UI 顯示回饋並重新載入現值；下一次 dispatch（含 refill）即用新值，無需重啟 serve。",
+    "測試（stdlib unittest，BRIEF_HOME 暫存目錄）至少涵蓋：GET 回傳完整現值、POST 白名單欄位 roundtrip、白名單外鍵被 400 拒絕且檔案未變、型別錯誤 400 且檔案未變、未知既有鍵在重寫後保留、寫入後 dispatch 設定讀到新值。既有測試全綠。",
+    "README.md 與 README.zh-TW.md 的 Web UI 節各補一段 Settings 說明（英文為準，中文同步），含白名單範圍與唯讀欄位的原因。",
+    "新增與修改的對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
+   ],
+   "touches": [
+    "scripts/brief_me.py",
+    "scripts/brief_me.html",
+    "README.md",
+    "README.zh-TW.md",
+    "tests/test_brief_me_api.py"
+   ],
+   "signed_off": true
+  }
+ ]
 }

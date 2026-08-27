@@ -208,6 +208,8 @@ with open(os.path.expanduser("~/todo.txt")) as f:
 
 `dispatch.py` 開的 worker 在 prompt 裡就帶了協定：卡在使用者決策時用 `brief-submit`，收工前再用一次投報告。其他方式開的 session（cron、自己的腳本）則由 `brief-init` 提議把那一段協定追加到你指定的規則檔 - 通常是全域指令檔。
 
+Question 的 body 必須自足 - 審核者在手機上讀，沒有 repo 也沒有 worker 的對話脈絡。範本定義在 `brief-submit`（`Context:`／`Options:` 每個選項一句後果／`Recommendation:` 附理由）。
+
 ## 延伸閱讀
 
 - [`docs/schema.md`](docs/schema.md) - 收件匣 schema 與 atomic-append 協定的權威來源。

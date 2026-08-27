@@ -33,6 +33,28 @@ skill generates both.
 | `multi` | no | `true` when several `choices` may be picked together; the answer's `chosen` then comes back as an array |
 | `severity` | no | one of `low`, `normal`, `high`; defaults to `normal` |
 
+### Body template (self-contained rule)
+
+The reader reviews on a phone, with no repo access and none of your
+conversation context. A question body must be decidable from the card
+alone: write out the information that exists only in your context, and
+never reference file paths, code, or discussion the reader cannot see.
+
+Use this template for `body` (drop a line only when it truly does not
+apply):
+
+```
+Context: <why this decision is needed now - one sentence>
+Options:
+- <choice 1>: <its consequence - one sentence>
+- <choice 2>: <its consequence - one sentence>
+Recommendation: <choice> - <the reason - one sentence>
+```
+
+The `recommendation` key still carries the bare choice (the UI highlights
+it); the reason lives in the body, because a recommendation without its
+reason is exactly the context gap this template exists to close.
+
 Rejected (nothing is written, error explains why) when: `project` is
 missing/empty, `title` is missing/empty, `severity` is present but not one
 of the three allowed values, the payload already contains an `id` key, or

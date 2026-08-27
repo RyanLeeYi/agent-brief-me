@@ -2,5 +2,35 @@
  "project": "agent-brief-me",
  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
  "archive": "docs/archive/features.jsonl",
- "features": []
+ "features": [
+  {
+   "id": "F28",
+   "name": "補脈絡 dispatch：pending question 一鍵派便宜 session 重投自足的卡",
+   "status": "failing",
+   "signed_off": true,
+   "rationale": "審核時最痛的是答 question 當場缺脈絡（手機上、沒 repo）。投遞者預測不了讀者缺什麼，所以做成回問迴圈：審核介面對 pending question 多一個「補脈絡」動作，dispatch 一個 session 重投一張自足的卡並 cancel 原卡。成本考量：--resume 沒有 cache、全價重讀整段歷史，而任務只是「讀懂→重寫一張卡」，因此模型獨立設定 dispatch.context_model（預設 sonnet，比照一般 dispatch 可再調便宜）；取捨：不預設 haiku，卡重寫失真會讓使用者多審一輪，省的錢賠回去。",
+   "acceptance": [
+    "config.json 新增 dispatch.context_model：缺鍵或 null 時預設 \"sonnet\"；README.md 與 README.zh-TW.md 的 config 表各補一列（英文為準，中文同步）；brief-init SKILL.md 的 dispatch 設定訪談新增一問「Model for context-refill sessions?」（預設 sonnet，說明用途是補脈絡重投、可設便宜模型），答案寫進 config 的 dispatch.context_model。",
+    "dispatch.py 新增 refill 入口（CLI 可用 question id 指定單一 pending question）：該 question 有 session_id 時 spawn claude -p --resume <session_id>；沒有時在該專案目錄 fresh spawn claude -p。兩種都用 --model <context_model>、--add-dir ~/.agent-brief、--disallowedTools Agent，allowedTools 只有 Bash,Read,Glob,Grep,Skill（比一般 dispatch 窄：不含 Edit/Write）。",
+    "refill prompt 含：原卡 id 與 title、要求依 brief-submit 的 body template（Context／Options 各選項後果／Recommendation 附理由）重投一張自足的卡、投完對原卡 append status cancelled、除此之外不做任何工作。",
+    "refill dispatch 本身不寫 answer 也不寫 status：派出當下原卡仍是 pending（cancel 由被派的 session 投完新卡後才做）。",
+    "dispatches.jsonl 照常寫 started／finished，tasks 元素 kind 為 \"refill\"（feature 依既有規則解析，title 為原卡 title）；docs/schema.md 的 kind 說明補上 refill。既有讀者（sessions 檢視、requeue）對 kind refill 不需特別處理即不誤動作：requeue 的資格判定對 refill batch 照常適用。",
+    "同一 question 已有進行中的 refill batch（started 無 finished 且 pid 存活）時，再次觸發不重複 spawn，回覆已在跑。",
+    "Web UI：pending question 的卡上多一個補脈絡動作，呼叫新 API 端點觸發 refill dispatch，成功後顯示已派出（含 elapsed 可在 Sessions 頁看到該 session）；重複點擊觸發第 6 條的去重回覆。",
+    "brief-me SKILL.md 的逐題審核流程納入補脈絡選項：使用者選它時跑 refill dispatch 而非寫 answer，該題本輪跳過。",
+    "新增 tests（stdlib unittest，BRIEF_HOME 指向暫存目錄、claude 指向假腳本，絕不碰真實 ~/.agent-brief 也不真的 spawn claude）至少涵蓋：有 session_id 走 resume、無 session_id 走 fresh、--model 吃 context_model 且預設 sonnet、allowlist 不含 Edit/Write、prompt 含 template 三要素與 cancel 指示、去重擋重複 spawn。既有測試全綠。",
+    "新增與修改的對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
+   ],
+   "touches": [
+    "scripts/dispatch.py",
+    "scripts/brief_me.py",
+    "skills/brief-me/SKILL.md",
+    "skills/brief-init/SKILL.md",
+    "docs/schema.md",
+    "README.md",
+    "README.zh-TW.md",
+    "tests/test_refill_dispatch.py"
+   ]
+  }
+ ]
 }

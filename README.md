@@ -209,6 +209,8 @@ Your script receives e.g. `send-telegram.py my-project question high "prod deplo
 
 Workers spawned by `dispatch.py` get the protocol in their prompt: use `brief-submit` when blocked on a user decision, and once more before finishing to report. For sessions you start by other means (cron, your own scripts), `brief-init` offers to append that one-paragraph protocol to a rules file you name - your global instructions file is the usual target.
 
+Question bodies must be self-contained - the reviewer reads them on a phone, without the repo or the worker's conversation context. `brief-submit` defines the template (`Context:` / `Options:` with one consequence per choice / `Recommendation:` with its reason).
+
 ## Trust boundary
 
 Three things below are left to your own environment; this plugin does not provide them.

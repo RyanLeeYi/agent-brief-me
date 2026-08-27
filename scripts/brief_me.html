@@ -276,15 +276,37 @@
   .session-progress-bar{ display:inline-block; width:120px; height:4px; border-radius:2px; background:var(--border); overflow:hidden; vertical-align:middle; }
   .session-progress-fill{ display:block; height:100%; background:var(--accent); }
   .session-table-head{
-    display:grid; grid-template-columns:92px 150px 1fr 60px 50px 140px; gap:12px;
+    display:grid; grid-template-columns:92px 150px 1fr 60px 50px 30px; gap:12px;
     font-size:11px; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-muted);
     padding:0 0 6px;
   }
-  .session-row{
-    display:grid; grid-template-columns:92px 150px 1fr 60px 50px 140px; gap:12px; align-items:center;
-    padding:10px 0; border-bottom:1px solid var(--border);
-  }
+
+  /* F31: finished rows and running cards collapse to a summary; a click on
+     .session-row-summary (or the running card's equivalent toggle) reveals
+     .session-row-detail's per-task question/answer breakdown. */
+  .session-row{ border-bottom:1px solid var(--border); }
   .session-row--danger{ background:var(--danger-bg); }
+  .session-row-summary{ width:100%; text-align:left; cursor:pointer; min-height:44px; }
+  .session-row .session-row-summary{
+    display:grid; grid-template-columns:92px 150px 1fr 60px 50px 30px; gap:12px; align-items:center;
+    padding:10px 0;
+  }
+  .session-card-running .session-row-summary{ display:flex; align-items:center; gap:8px; }
+  .session-row-summary .chevron{ margin-left:auto; flex-shrink:0; transition:transform var(--transition); }
+  .session-row.expanded .chevron, .session-card-running.expanded .chevron{ transform:rotate(180deg); }
+  .session-row-detail{ padding:0 0 12px; color:var(--text-secondary); }
+  .session-card-running .session-row-detail{ padding:4px 0 0; }
+  .session-task-list{ list-style:none; margin:0 0 8px; padding:0; display:flex; flex-direction:column; gap:10px; }
+  .session-task-item{ border-left:2px solid var(--border-strong); padding-left:10px; }
+  .session-task-title{ font-weight:600; color:var(--text); font-size:13px; }
+  .session-task-body{ margin:2px 0; white-space:pre-wrap; }
+  .session-task-answer{ margin:2px 0; }
+  .session-task-answer-label{
+    font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.03em;
+    color:var(--text-muted); margin-right:6px;
+  }
+  .session-task-nomatch{ margin:2px 0; color:var(--text-muted); font-style:italic; }
+  .session-row-next:empty{ display:none; }
   .session-subtext{ font-size:12px; color:var(--text-muted); margin-top:2px; }
   .badge-outcome-report{ background:var(--accent-bg); color:var(--accent); }
   .badge-outcome-killed{ background:var(--danger); color:#fff; }
@@ -347,25 +369,27 @@
      overrides last guarantees they win at <=768px. */
   @media (max-width: 768px){
     .session-table-head{ display:none; }
-    /* stacked card: [badge project ..... took / ended] / tasks / next */
-    .session-row{
+    /* stacked summary: [badge project ..... took / ended] / tasks / chevron;
+       the F31 detail panel (next action, per-task Q&A) stacks below once
+       expanded, full width either way. Selector is `.session-row
+       .session-row-summary` (not the bare class) to match the specificity
+       of the unconditional `.session-row .session-row-summary{
+       display:grid; ...}` rule above - same tie-break the comment on this
+       block already documents; a lower-specificity override here would
+       lose to that rule even inside this media query. */
+    .session-row .session-row-summary{
       display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;
       padding:12px 0;
     }
-    .session-row > *{ min-width:0; }
-    .session-row .cell-outcome{ order:1; }
-    .session-row .cell-project{ order:2; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .session-row .cell-took{ order:3; margin-left:0; }
-    .session-row .cell-ended{ order:4; margin-left:0; }
-    .session-row .cell-ended::before{ content:"· "; }
-    .session-row .cell-tasks{ order:5; flex-basis:100%; }
-    .session-row .cell-next{ order:6; flex-basis:100%; }
-    .session-row .cell-next:empty{ display:none; }
-    .session-row .cell-next .btn-link, .session-row .resume-cmd{ min-height:44px; padding:0 8px; margin-left:-8px; }
-    .session-row .task-chip{
-      display:block; white-space:normal; border:none; padding:0; border-radius:0;
-      font-family:inherit; font-size:13px; color:var(--text);
-    }
+    .session-row-summary > *{ min-width:0; }
+    .session-row-summary .cell-outcome{ order:1; }
+    .session-row-summary .cell-project{ order:2; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .session-row-summary .cell-took{ order:3; margin-left:0; }
+    .session-row-summary .cell-ended{ order:4; margin-left:0; }
+    .session-row-summary .cell-ended::before{ content:"· "; }
+    .session-row-summary .cell-tasks{ order:5; flex-basis:100%; }
+    .session-row-summary .chevron{ order:6; }
+    .session-row-next .btn-link, .session-row-next .resume-cmd{ min-height:44px; padding:0 8px; margin-left:-8px; }
     #sessions-finished-hidden{ flex-basis:100%; margin-left:0; }
     .section-header{ flex-wrap:wrap; }
 
@@ -471,7 +495,7 @@
             <span id="sessions-finished-hidden"></span>
           </div>
           <div class="session-table-head">
-            <span>Outcome</span><span>Project</span><span>Tasks</span><span>Took</span><span>Ended</span><span>Next</span>
+            <span>Outcome</span><span>Project</span><span>Tasks</span><span>Took</span><span>Ended</span><span></span>
           </div>
           <div class="section-body" id="sessions-finished-list"></div>
         </section>
@@ -1375,6 +1399,50 @@
     }).join('');
   }
 
+  // F31: the collapsed-row summary for a session's task list - a count, or
+  // (single task) that task's own label, so a one-task session's collapsed
+  // row is still informative without opening it.
+  function taskSummaryText(tasks) {
+    tasks = tasks || [];
+    if (tasks.length === 0) return 'No tasks';
+    if (tasks.length === 1) return taskLabel(tasks[0]);
+    return tasks.length + ' tasks';
+  }
+
+  // F31: expanded-detail per-task question/answer breakdown. `tasksQa` is
+  // sessions_view()'s `tasks_qa` - index-aligned with `tasks`, one entry per
+  // task, from brief_me.py's _task_qa_view(); this function only renders
+  // the fields it is given, no matching logic on the frontend.
+  function sessionTaskQaHTML(qa) {
+    if (!qa || qa.no_matching_question) {
+      return '<p class="session-task-nomatch">No matching question found.</p>';
+    }
+    var html = '';
+    if (qa.question_body) {
+      html += '<p class="session-task-body">' + escapeHtml(qa.question_body) + '</p>';
+    }
+    var answerParts = [];
+    if (qa.answer_chosen != null) {
+      answerParts.push(Array.isArray(qa.answer_chosen) ? qa.answer_chosen.join(', ') : String(qa.answer_chosen));
+    }
+    if (qa.answer_free_text) answerParts.push(qa.answer_free_text);
+    if (answerParts.length) {
+      html += '<p class="session-task-answer"><span class="session-task-answer-label">Answer</span>' +
+        escapeHtml(answerParts.join(' / ')) + '</p>';
+    }
+    return html;
+  }
+
+  function sessionTaskListHTML(tasks, tasksQa) {
+    tasks = tasks || [];
+    if (!tasks.length) return '<p class="empty-state">No tasks recorded.</p>';
+    tasksQa = tasksQa || [];
+    return '<ul class="session-task-list">' + tasks.map(function (t, i) {
+      return '<li class="session-task-item"><div class="session-task-title">' + escapeHtml(taskLabel(t)) + '</div>' +
+        sessionTaskQaHTML(tasksQa[i]) + '</li>';
+    }).join('') + '</ul>';
+  }
+
   // Backward compat: a sessions.json written before F20 (or by any other
   // producer) may not carry `outcome` - derive it the same way
   // brief_me.py's _finished_outcome() does.
@@ -1460,38 +1528,61 @@
     return parts.length ? '<div class="session-footer">' + parts.join('') + '</div>' : '';
   }
 
+  // F31: shared collapsed<->expanded chevron, reused by both the running
+  // card and the finished row toggle buttons.
+  var SESSION_CHEVRON_SVG = '<svg class="chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 3l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>';
+
   function sessionRunningCardHTML(s) {
     var badge = s.log == null ? '<span class="badge">WATCH</span>' : '<span class="badge">LOG</span>';
     var currentFeature = s.current && s.current.feature;
     return '' +
       '<article class="question-card session-card-running" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
-        '<div class="card-meta">' +
+        '<button type="button" class="session-row-summary" data-action="toggle-session">' +
           '<span class="dot dot-green"></span>' +
           '<span class="card-project">' + escapeHtml(s.project) + '</span>' +
           badge +
           '<span class="card-project">pid ' + escapeHtml(s.pid) + '</span>' +
+          '<span class="cell-tasks">' + escapeHtml(taskSummaryText(s.tasks)) + '</span>' +
           '<span class="card-age">' + escapeHtml(elapsedString(s.elapsed_seconds)) + '</span>' +
+          SESSION_CHEVRON_SVG +
+        '</button>' +
+        '<div class="session-row-detail" hidden>' +
+          '<div class="session-tasks">' + tasksChipsHTML(s.tasks, currentFeature) + '</div>' +
+          sessionProgressHTML(s) +
+          sessionTaskListHTML(s.tasks, s.tasks_qa) +
         '</div>' +
-        '<div class="session-tasks">' + tasksChipsHTML(s.tasks, currentFeature) + '</div>' +
-        sessionProgressHTML(s) +
       '</article>';
   }
 
   function sessionFinishedRowHTML(s) {
     var outcome = sessionOutcome(s);
     var rowClass = 'session-row' + ((outcome === 'killed' || outcome === 'ctrl_c') ? ' session-row--danger' : '');
-    var taskChips = (s.tasks || []).map(function (t) {
-      return '<span class="task-chip">' + escapeHtml(taskLabel(t)) + '</span>';
-    }).join('');
     return '' +
       '<div class="' + rowClass + '" data-batch-id="' + escapeHtml(s.batch_id) + '">' +
-        '<span class="cell-outcome">' + outcomeBadgeHTML(s) + '</span>' +
-        '<span class="card-project cell-project">' + escapeHtml(s.project) + '</span>' +
-        '<span class="cell-tasks">' + taskChips + tasksSubtextHTML(s) + '</span>' +
-        '<span class="card-age cell-took">' + escapeHtml(elapsedString(s.duration_seconds)) + '</span>' +
-        '<span class="card-age cell-ended">' + escapeHtml(timeAgo(s.finished_at)) + '</span>' +
-        '<span class="cell-next">' + sessionNextHTML(s) + '</span>' +
+        '<button type="button" class="session-row-summary" data-action="toggle-session">' +
+          '<span class="cell-outcome">' + outcomeBadgeHTML(s) + '</span>' +
+          '<span class="card-project cell-project">' + escapeHtml(s.project) + '</span>' +
+          '<span class="cell-tasks">' + escapeHtml(taskSummaryText(s.tasks)) + '</span>' +
+          '<span class="card-age cell-took">' + escapeHtml(elapsedString(s.duration_seconds)) + '</span>' +
+          '<span class="card-age cell-ended">' + escapeHtml(timeAgo(s.finished_at)) + '</span>' +
+          SESSION_CHEVRON_SVG +
+        '</button>' +
+        '<div class="session-row-detail" hidden>' +
+          sessionTaskListHTML(s.tasks, s.tasks_qa) +
+          tasksSubtextHTML(s) +
+          '<div class="session-row-next">' + sessionNextHTML(s) + '</div>' +
+        '</div>' +
       '</div>';
+  }
+
+  // F31: shared toggle for both the running card and the finished row - the
+  // click target is `container` (`.session-card-running` or `.session-row`),
+  // which carries both the toggle button and the `.session-row-detail` panel.
+  function toggleSessionDetail(container) {
+    var detail = container.querySelector('.session-row-detail');
+    if (!detail) return;
+    detail.hidden = !detail.hidden;
+    container.classList.toggle('expanded', !detail.hidden);
   }
 
   function renderSessions() {
@@ -1531,7 +1622,17 @@
         reportCard.classList.add('expanded');
         reportCard.scrollIntoView({ block: 'center' });
       }
+      return;
     }
+    var toggleBtn = e.target.closest('[data-action="toggle-session"]');
+    if (toggleBtn) toggleSessionDetail(toggleBtn.closest('.session-row'));
+  }
+
+  // F31: running cards get their own toggle listener (the finished list's
+  // copy-resume/open-log/open-report actions don't apply here).
+  function onSessionsRunningClick(e) {
+    var toggleBtn = e.target.closest('[data-action="toggle-session"]');
+    if (toggleBtn) toggleSessionDetail(toggleBtn.closest('.session-card-running'));
   }
 
   // ------------------------------------------------------------ settings ----
@@ -1727,6 +1828,7 @@
   });
   dismissedListEl.addEventListener('click', onDismissedClick);
   sessionsFinishedListEl.addEventListener('click', onSessionsFinishedClick);
+  sessionsRunningListEl.addEventListener('click', onSessionsRunningClick);
 
   dispatchCheckboxEl.addEventListener('change', updateAnswersPanel);
   watchCheckboxEl.addEventListener('change', updateAnswersPanel);

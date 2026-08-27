@@ -692,6 +692,80 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(fin["report_note"], "waiting on review")
         self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 1})
 
+    # -- GET /api/state sessions tasks_qa (F31) --------------------------
+    def test_state_sessions_tasks_qa_matched_and_unmatched(self):
+        """F31: sessions_view() pairs each task with the question that
+        produced it, by (project, title) - the same key structure
+        _requeue_candidates() uses. A matched task's tasks_qa entry carries
+        question_body + the last answer's raw fields; an unmatched task's
+        entry carries only no_matching_question, for both running and
+        finished rows."""
+        title = "Pick a datastore"
+        qid = self._add_question(project="demo", title=title, body="SQLite or JSONL?", choices=["SQLite", "JSONL"])
+        status, _ = self._post("/api/answer", {"answers": [{"id": qid, "chosen": "JSONL"}]})
+        self.assertEqual(status, 200)
+
+        now = datetime.now(timezone.utc)
+        batch_running = str(uuid.uuid4())
+        batch_finished = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch_running, "project": "demo", "pid": os.getpid(),
+             "started_at": self._ts(now - timedelta(minutes=1)), "log": None,
+             "tasks": [{"feature": None, "kind": "dispatch", "title": title},
+                       {"feature": None, "kind": "dispatch", "title": "No such question"}]},
+            {"type": "started", "batch_id": batch_finished, "project": "demo", "pid": 999003,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None,
+             "tasks": [{"feature": None, "kind": "dispatch", "title": title}]},
+            {"type": "finished", "batch_id": batch_finished,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+
+        _, data = self._get("/api/state")
+        sessions = data["sessions"]
+
+        run = sessions["running"][0]
+        self.assertEqual(len(run["tasks_qa"]), 2)
+        matched, unmatched = run["tasks_qa"]
+        self.assertEqual(matched["question_body"], "SQLite or JSONL?")
+        self.assertEqual(matched["answer_chosen"], "JSONL")
+        self.assertNotIn("answer_free_text", matched)
+        self.assertNotIn("no_matching_question", matched)
+        self.assertEqual(unmatched, {"no_matching_question": True})
+        self.assertNotIn("question_body", unmatched)
+        self.assertNotIn("answer_chosen", unmatched)
+
+        fin = sessions["finished"][0]
+        self.assertEqual(len(fin["tasks_qa"]), 1)
+        self.assertEqual(fin["tasks_qa"][0]["question_body"], "SQLite or JSONL?")
+        self.assertEqual(fin["tasks_qa"][0]["answer_chosen"], "JSONL")
+
+    def test_state_sessions_tasks_qa_shows_answer_regardless_of_consumed_flag(self):
+        """F31: unlike _requeue_candidates()'s `resolved` dict, tasks_qa's
+        match is not gated on the answer's current `consumed` flag - a
+        finished session's task still shows its original question/answer
+        after F24's requeue later flips that answer's `consumed` back to
+        false."""
+        title = "Pick one"
+        qid = self._add_question(project="demo", title=title, body="body text", choices=["A"])
+        self._consumed_answer(qid, chosen="A")  # answered, consumed True
+        brief_me.atomic_append_line(self._answers_path(), {  # F24 requeue: consumed flips back
+            "question_id": qid, "answered_at": brief_me._now(), "consumed": False, "chosen": "A"})
+
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": 999005,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None,
+             "tasks": [{"feature": None, "kind": "dispatch", "title": title}]},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+
+        _, data = self._get("/api/state")
+        qa = data["sessions"]["finished"][0]["tasks_qa"][0]
+        self.assertEqual(qa["question_body"], "body text")
+        self.assertEqual(qa["answer_chosen"], "A")
+
     # -- F29: refilling questions move out of pending_questions -------------
     def _write_refill_dispatches(self, records):
         with open(os.path.join(self.home, "dispatches.jsonl"), "w", encoding="utf-8") as f:

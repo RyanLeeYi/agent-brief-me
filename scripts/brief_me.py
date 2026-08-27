@@ -528,7 +528,8 @@ def _api_state(brief_home):
     reports = _report_times(os.path.join(brief_home, "inbox.jsonl"))
     payload["running"] = running_sessions(dispatches_path, reports)
     projects_by_path = {p["name"]: p["path"] for p in config.get("projects", [])}
-    payload["sessions"] = sessions_view(dispatches_path, projects_by_path, reports)
+    payload["sessions"] = sessions_view(dispatches_path, projects_by_path, reports,
+                                        questions, q_last_status, answers_by_question)
 
     return payload
 
@@ -843,7 +844,46 @@ def _finished_outcome(ended_by, exit_code):
     return "ok" if exit_code == 0 else "exit"
 
 
-def sessions_view(path, projects_by_path, reports=None):
+def _answered_question_lookup(questions, q_last_status):
+    """(F31) (project, title) -> question_id, for every question whose last
+    status is "answered" - the same key structure _requeue_candidates()
+    uses to resolve a dispatched task back to the question that produced
+    it. Unlike that function's `resolved` dict, this one is not also gated
+    on the answer's current `consumed` flag: a session's task list should
+    keep showing its original question/answer even after F24's requeue
+    later flips that answer's `consumed` back to false. On a duplicate
+    (project, title), the most recently created question wins - `questions`
+    dict iteration follows inbox.jsonl's file order."""
+    resolved = {}
+    for qid, q in questions.items():
+        status = q_last_status.get(qid)
+        if status and status["status"] == "answered":
+            resolved[(q["project"], q["title"])] = qid
+    return resolved
+
+
+def _task_qa_view(task, project, resolved, questions, answers_by_question):
+    """(F31) One tasks[] element's paired question/answer, for the Sessions
+    view's expanded task detail: {"question_body": ..., "answer_chosen":
+    ... (if present), "answer_free_text": ... (if present)} when (project,
+    task title) resolves via `resolved`, else {"no_matching_question":
+    True} - the frontend renders the "no matching question" note off that
+    flag rather than guessing from missing keys."""
+    qid = resolved.get((project, _task_title(task)))
+    if qid is None:
+        return {"no_matching_question": True}
+    view = {"question_body": questions[qid].get("body", "")}
+    answer = answers_by_question.get(qid)
+    if answer:
+        if answer.get("chosen") is not None:
+            view["answer_chosen"] = answer["chosen"]
+        if answer.get("free_text") is not None:
+            view["answer_free_text"] = answer["free_text"]
+    return view
+
+
+def sessions_view(path, projects_by_path, reports=None, questions=None,
+                   q_last_status=None, answers_by_question=None):
     """GET /api/state's `sessions` field (F14): {running: [...], finished:
     [...], finished_hidden: N, finished_counts: {report, killed}} (N =
     batches whose finished_at is older than SESSION_WINDOW_SECONDS;
@@ -853,9 +893,18 @@ def sessions_view(path, projects_by_path, reports=None):
     `started` record with no `tasks` key (written before this field existed)
     folds to []. Each `finished` row also carries F20's `outcome` and
     `report_id` (the report, if any, that most likely explains it - see
-    _nearest_report())."""
+    _nearest_report()).
+
+    F31: every row (running and finished) also carries `tasks_qa`, a list
+    index-aligned with `tasks` - see _task_qa_view(). The (project, title)
+    -> question resolution (_answered_question_lookup) is folded once here,
+    not per row, per this feature's performance constraint."""
     now = datetime.now(timezone.utc)
     reports = reports or {}
+    questions = questions or {}
+    q_last_status = q_last_status or {}
+    answers_by_question = answers_by_question or {}
+    resolved = _answered_question_lookup(questions, q_last_status)  # F31
     reports_with_id = _reports_with_ids(os.path.join(os.path.dirname(path), "inbox.jsonl"))
     running, finished, hidden = [], [], 0
     for batch_id, batch in _load_batches(path).items():
@@ -869,29 +918,32 @@ def sessions_view(path, projects_by_path, reports=None):
                     continue
                 if not _pid_alive(pid):
                     continue
-                ended = _report_ended_at(reports, rec.get("project"), t0)
+                project = rec.get("project")
+                tasks = rec.get("tasks", [])
+                tasks_qa = [_task_qa_view(t, project, resolved, questions, answers_by_question) for t in tasks]
+                ended = _report_ended_at(reports, project, t0)
                 if ended is not None:
                     if (now - ended).total_seconds() > SESSION_WINDOW_SECONDS:
                         hidden += 1
                         continue
-                    report_id, report_summary = _nearest_report(reports_with_id, rec.get("project"), t0)
+                    report_id, report_summary = _nearest_report(reports_with_id, project, t0)
                     finished.append({
-                        "batch_id": batch_id, "project": rec.get("project"), "pid": pid,
+                        "batch_id": batch_id, "project": project, "pid": pid,
                         "started_at": rec["started_at"],
                         "finished_at": ended.strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "duration_seconds": int((ended - t0).total_seconds()),
                         "exit_code": None, "ended_by": "report",
-                        "tasks": rec.get("tasks", []), "log": rec.get("log"),
+                        "tasks": tasks, "tasks_qa": tasks_qa, "log": rec.get("log"),
                         "outcome": "report", "report_id": report_id,
                         "report_note": _report_note(report_summary) if report_id else None,
                     })
                     continue
                 running.append({
-                    "batch_id": batch_id, "project": rec.get("project"), "pid": pid,
+                    "batch_id": batch_id, "project": project, "pid": pid,
                     "started_at": rec["started_at"],
                     "elapsed_seconds": int((now - t0).total_seconds()),
-                    "tasks": rec.get("tasks", []), "log": rec.get("log"),
-                    "current": _project_current(projects_by_path.get(rec.get("project"))),
+                    "tasks": tasks, "tasks_qa": tasks_qa, "log": rec.get("log"),
+                    "current": _project_current(projects_by_path.get(project)),
                 })
             continue
 
@@ -910,14 +962,17 @@ def sessions_view(path, projects_by_path, reports=None):
             except (KeyError, ValueError):
                 duration = None
             exit_code = exit_codes[i] if i < len(exit_codes) else None
-            report_id, report_summary = _nearest_report(reports_with_id, rec.get("project"), finished_at)
+            project = rec.get("project")
+            tasks = rec.get("tasks", [])
+            tasks_qa = [_task_qa_view(t, project, resolved, questions, answers_by_question) for t in tasks]
+            report_id, report_summary = _nearest_report(reports_with_id, project, finished_at)
             finished.append({
-                "batch_id": batch_id, "project": rec.get("project"), "pid": rec.get("pid"),
+                "batch_id": batch_id, "project": project, "pid": rec.get("pid"),
                 "started_at": rec.get("started_at"), "finished_at": fin["finished_at"],
                 "duration_seconds": duration,
                 "exit_code": exit_code,
                 "ended_by": "exit",
-                "tasks": rec.get("tasks", []), "log": rec.get("log"),
+                "tasks": tasks, "tasks_qa": tasks_qa, "log": rec.get("log"),
                 "outcome": _finished_outcome("exit", exit_code), "report_id": report_id,
                 "report_note": _report_note(report_summary) if report_id else None,
             })

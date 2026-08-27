@@ -491,6 +491,7 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(page.locator("#sessions-finished-hidden")).to_contain_text("1 reported")
     expect(page.locator("#sessions-finished-hidden")).to_contain_text("2 killed")
 
+    frows.nth(1).locator('[data-action="toggle-session"]').click()  # F31: open-report lives in the expanded detail
     frows.nth(1).locator('[data-action="open-report"]').click()
     expect(page.locator("#inbox-view")).to_be_visible()
     expect(page.locator("#sessions-view")).to_be_hidden()
@@ -498,6 +499,75 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(r2_card_reopened.locator(".report-full")).to_be_visible()
     os.remove(os.path.join(brief_home, "sessions.json"))
     print("scene: F20 Finished table outcome badges (KILLED/REPORT), row styling, open-report link - OK")
+
+    # ---- F31: Sessions rows/cards collapse by default; expand shows task Q&A ----
+    with open(os.path.join(brief_home, "sessions.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "finished_hidden": 0, "finished_counts": {"report": 0, "killed": 0},
+            "running": [{
+                "batch_id": "run-qa", "project": proj, "pid": 5555,
+                "started_at": "2026-08-22T05:00:00Z", "elapsed_seconds": 42,
+                "tasks": [{"feature": None, "kind": "dispatch", "title": "Pick a datastore"}],
+                "tasks_qa": [{"question_body": "SQLite or JSONL?", "answer_chosen": "JSONL"}],
+                "log": None, "current": None,
+            }],
+            "finished": [{
+                "batch_id": "b5", "project": proj, "pid": 6, "started_at": "2026-08-22T06:00:00Z",
+                "finished_at": "2026-08-22T06:05:00Z", "duration_seconds": 300,
+                "exit_code": 0, "ended_by": "exit",
+                "tasks": [
+                    {"feature": None, "kind": "dispatch", "title": "Pick a datastore"},
+                    {"feature": None, "kind": "dispatch", "title": "Mystery task"},
+                ],
+                "tasks_qa": [
+                    {"question_body": "SQLite or JSONL?", "answer_chosen": "JSONL"},
+                    {"no_matching_question": True},
+                ],
+                "log": "/tmp/x.log", "outcome": "ok", "report_id": None, "report_note": None,
+            }],
+        }, f)
+    page.locator("#refresh-btn").click()
+    page.locator("#sessions-entry").click()
+
+    # default collapsed: the detail panel is hidden on both the running card
+    # and the finished row.
+    run_card = page.locator('.session-card-running[data-batch-id="run-qa"]')
+    expect(run_card.locator(".session-row-detail")).to_be_hidden()
+    fin_row = page.locator('.session-row[data-batch-id="b5"]')
+    expect(fin_row.locator(".session-row-detail")).to_be_hidden()
+    # collapsed finished row shows a task count, not the per-task detail.
+    expect(fin_row.locator(".session-row-summary .cell-tasks")).to_have_text("2 tasks")
+    # a single-task running card shows that task's own label instead.
+    expect(run_card.locator(".session-row-summary .cell-tasks")).to_have_text("Pick a datastore")
+
+    # expand the finished row: per-task question/answer breakdown appears.
+    fin_row.locator('[data-action="toggle-session"]').click()
+    expect(fin_row.locator(".session-row-detail")).to_be_visible()
+    items = fin_row.locator(".session-task-item")
+    expect(items).to_have_count(2)
+    expect(items.nth(0)).to_contain_text("SQLite or JSONL?")
+    expect(items.nth(0)).to_contain_text("JSONL")
+    expect(items.nth(1)).to_contain_text("No matching question found.")
+    # clicking an existing action inside the detail (open log) must not
+    # collapse it back.
+    fin_row.locator('[data-action="open-log"]').click()
+    expect(fin_row.locator(".session-row-detail")).to_be_visible()
+    # clicking the toggle again collapses it.
+    fin_row.locator('[data-action="toggle-session"]').click()
+    expect(fin_row.locator(".session-row-detail")).to_be_hidden()
+
+    # the running card expands/collapses the same way.
+    run_card.locator('[data-action="toggle-session"]').click()
+    expect(run_card.locator(".session-row-detail")).to_be_visible()
+    run_items = run_card.locator(".session-task-item")
+    expect(run_items).to_have_count(1)
+    expect(run_items.first).to_contain_text("SQLite or JSONL?")
+    expect(run_items.first).to_contain_text("JSONL")
+    run_card.locator('[data-action="toggle-session"]').click()
+    expect(run_card.locator(".session-row-detail")).to_be_hidden()
+
+    os.remove(os.path.join(brief_home, "sessions.json"))
+    print("scene: F31 sessions rows/cards collapse by default, expand shows per-task question/answer - OK")
 
     # ---- F21: mobile layout (390px) - sessions table + report card don't overflow ----
     original_viewport = page.viewport_size
@@ -529,7 +599,11 @@ def run_scenes(page, base_url, brief_home, fx):
     tasks_w = first_row.locator(".cell-tasks").evaluate("el => el.getBoundingClientRect().width")
     assert tasks_w >= 300, f"F22: .cell-tasks should span the row at 390px, got {tasks_w}px"
     second_row = page.locator("#sessions-finished-list .session-row").nth(1)  # report row carries "open report"
-    next_h = second_row.locator(".cell-next button").evaluate("el => el.getBoundingClientRect().height")
+    # F31: the row toggle itself is the collapsed-state tap target.
+    toggle_h = second_row.locator('[data-action="toggle-session"]').evaluate("el => el.getBoundingClientRect().height")
+    assert toggle_h >= 44, f"F31: session row toggle must be >=44px tall, got {toggle_h}px"
+    second_row.locator('[data-action="toggle-session"]').click()
+    next_h = second_row.locator(".session-row-next button").evaluate("el => el.getBoundingClientRect().height")
     assert next_h >= 44, f"F22: next-action button must be >=44px tall, got {next_h}px"
 
     page.locator("#sidebar-toggle").click()

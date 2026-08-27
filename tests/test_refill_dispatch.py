@@ -253,6 +253,74 @@ class RefillDispatchTests(unittest.TestCase):
     def test_cli_refill_missing_argument_is_usage_error(self):
         self.assertEqual(dispatch.main(["--refill"]), 2)
 
+    # -- F29: context_language / plain_language additions to the prompt -----
+    def test_prompt_null_context_language_is_unchanged_from_f28(self):
+        question = {"id": "q-1", "project": "demo", "title": "Pick a datastore"}
+        raw_line = json.dumps(question)
+
+        base = dispatch.build_refill_prompt(question, raw_line)
+        with_null_config = dispatch.build_refill_prompt(question, raw_line, {"dispatch": {"context_language": None}})
+
+        self.assertEqual(base, with_null_config)
+
+    def test_prompt_context_language_set_adds_language_sentence(self):
+        question = {"id": "q-1", "project": "demo", "title": "Pick a datastore"}
+        raw_line = json.dumps(question)
+        config = {"dispatch": {"context_language": "Traditional Chinese (keep technical terms in English)"}}
+
+        prompt = dispatch.build_refill_prompt(question, raw_line, config)
+
+        self.assertIn("Traditional Chinese (keep technical terms in English)", prompt)
+        base = dispatch.build_refill_prompt(question, raw_line)
+        self.assertTrue(prompt.startswith(base))
+
+    def test_prompt_plain_language_off_is_unchanged(self):
+        question = {"id": "q-1", "project": "demo", "title": "Pick a datastore"}
+        raw_line = json.dumps(question)
+
+        base = dispatch.build_refill_prompt(question, raw_line)
+        off = dispatch.build_refill_prompt(question, raw_line, {"dispatch": {"plain_language": "off"}})
+
+        self.assertEqual(base, off)
+
+    def test_prompt_plain_language_refill_and_all_add_plain_sentence(self):
+        question = {"id": "q-1", "project": "demo", "title": "Pick a datastore"}
+        raw_line = json.dumps(question)
+
+        for value in ("refill", "all"):
+            prompt = dispatch.build_refill_prompt(question, raw_line, {"dispatch": {"plain_language": value}})
+            self.assertIn("plain language", prompt)
+            self.assertIn("non-technical reader", prompt)
+
+    @mock.patch("dispatch.spawn_waiter")
+    @mock.patch("dispatch.spawn")
+    def test_refill_question_passes_config_language_into_prompt(self, mock_spawn, mock_waiter):
+        self._write_config(dispatch_extra={"context_language": "Japanese"})
+        mock_spawn.return_value = mock.Mock(pid=1)
+        qid = self._add_question()
+
+        dispatch.refill_question(self.home, "claude", qid)
+
+        prompt = mock_spawn.call_args[0][2]
+        self.assertIn("Japanese", prompt)
+
+    def test_build_prompt_plain_all_adds_sentence_with_language(self):
+        config = {"dispatch": {"plain_language": "all", "context_language": "English"}}
+        prompt = dispatch.build_prompt("demo", [], delegate=False, config=config)
+        self.assertIn("plain language", prompt)
+        self.assertIn("in English", prompt)
+
+    def test_build_prompt_plain_refill_only_does_not_touch_regular_prompt(self):
+        base = dispatch.build_prompt("demo", [], delegate=False)
+        refill_only = dispatch.build_prompt("demo", [], delegate=False,
+                                            config={"dispatch": {"plain_language": "refill"}})
+        self.assertEqual(base, refill_only)
+
+    def test_build_prompt_no_config_is_unchanged(self):
+        base = dispatch.build_prompt("demo", [], delegate=False)
+        with_empty_config = dispatch.build_prompt("demo", [], delegate=False, config={})
+        self.assertEqual(base, with_empty_config)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

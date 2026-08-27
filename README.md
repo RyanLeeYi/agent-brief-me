@@ -135,7 +135,9 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
   "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
   "model": null,
   "delegate": false,
-  "context_model": "sonnet"
+  "context_model": "sonnet",
+  "context_language": null,
+  "plain_language": "off"
 }
 ```
 
@@ -147,6 +149,8 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
 | `model` | `--model` for the worker; `null` keeps Claude Code's default |
 | `delegate` | `false` (default) tells workers to work solo and blocks the `Agent` tool; `true` lets workers dispatch subagents - it requires your environment to already have the `baton-dispatch` skill and an `executor` agent type installed, neither of which ships with this plugin |
 | `context_model` | `--model` for context-refill sessions (the inbox's "Add context" action / `dispatch.py --refill`); defaults to `"sonnet"` when missing or null, independent of `model` above - pick something cheap, since a `--resume` session pays full price with no cache |
+| `context_language` | free-form language description (e.g. `"Traditional Chinese (keep technical terms in English)"`) added to a context-refill session's prompt as a requirement for its replacement question's title/body; `null` (default) leaves that prompt unchanged |
+| `plain_language` | `"off"` (default, no change), `"refill"` (context-refill replacement questions must be plain, non-technical language), or `"all"` (that requirement also applies to every question/report a regular worker files via `brief-submit`, combined with `context_language` when it is set) |
 
 `~/.agent-brief` is always passed via `--add-dir` so `brief-submit` can write the inbox from inside a project. Missing keys fall back to the defaults above; an unknown `permission_mode` falls back to `auto`.
 

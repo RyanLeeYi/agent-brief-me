@@ -272,6 +272,55 @@ def question_view(q):
     return v
 
 
+def _running_refills(brief_home):
+    """(F29) {(project, title): started_at} for every dispatches.jsonl
+    `started` record whose batch has no `finished` line, whose pid is still
+    alive, and which carries a `kind: "refill"` task - the same "in flight"
+    condition dispatch.py's own find_running_refill()/is_refill_running()
+    use for their dedup, reimplemented here rather than imported: brief_me.py
+    and dispatch.py only ever talk to each other through the dispatches.jsonl
+    file format (docs/schema.md), the same way _run_dispatch/_run_refill call
+    dispatch.py as a subprocess instead of importing it. Malformed lines are
+    skipped, never raised on - fail-open, like _load_batches()."""
+    records = []
+    for line in iter_lines(os.path.join(brief_home, "dispatches.jsonl")):
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            continue
+    finished_batches = {r["batch_id"] for r in records if r.get("type") == "finished"}
+    out = {}
+    for r in records:
+        if r.get("type") != "started" or r.get("batch_id") in finished_batches:
+            continue
+        try:
+            alive = _pid_alive(int(r.get("pid", 0)))
+        except (TypeError, ValueError):
+            alive = True
+        if not alive:
+            continue
+        for t in r.get("tasks", []):
+            if isinstance(t, dict) and t.get("kind") == "refill":
+                out[(r.get("project"), t.get("title"))] = r.get("started_at")
+    return out
+
+
+def refilling_view(q, started_at):
+    """(F29) A pending question whose refill is in flight, for the Web UI's
+    "waiting on context" card state (design's State 2): no `options` (nothing
+    is answerable while this card is waiting) and no `body` (the card shows a
+    fixed explanatory sentence instead, not the original question text)."""
+    v = {k: q.get(k) for k in ("id", "project", "title", "severity") if q.get(k) is not None}
+    v["age"] = time_ago(q["created_at"])
+    v["refill_started_at"] = started_at
+    try:
+        elapsed = (datetime.now(timezone.utc) - _parse_utc(started_at)).total_seconds()
+    except (KeyError, ValueError, TypeError):
+        elapsed = 0
+    v["refill_elapsed_seconds"] = max(0, int(elapsed))
+    return v
+
+
 _REPORT_PART_SPLIT_RE = re.compile(r"[；;]")  # full-width or half-width semicolon
 _REPORT_FEATURE_ID_RE = re.compile(r"F(\d+)")
 _REPORT_STATUS_RE = re.compile(r"\b(passing|failing|blocked)\b", re.IGNORECASE)
@@ -324,6 +373,33 @@ def report_view(r):
     return v
 
 
+def _split_refilling(brief_home, pending):
+    """(F29) Partition `pending` questions into (still_pending, refilling):
+    a question moves to `refilling` while a context-refill batch is in
+    flight for its exact (project, title) - see _running_refills() - and
+    falls back to `still_pending` once that batch finishes or its pid dies,
+    with no write of any kind (the state is folded fresh every call)."""
+    running = _running_refills(brief_home)
+    still_pending, refilling = [], []
+    for q in pending:
+        started_at = running.get((q["project"], q["title"]))
+        if started_at:
+            refilling.append((q, started_at))
+        else:
+            still_pending.append(q)
+    return still_pending, refilling
+
+
+def _group_refilling_by_project(refilling):
+    grouped = defaultdict(list)
+    for q, started_at in refilling:
+        grouped[q["project"]].append((q, started_at))
+    return {
+        p: [refilling_view(q, started_at) for q, started_at in sorted(items, key=lambda t: t[1])]
+        for p, items in sorted(grouped.items())
+    }
+
+
 def _state(brief_home, collector_warning):
     """Shared question/report state used by both CLI `load` and GET
     /api/state. Returns (payload, questions, q_last_status,
@@ -332,12 +408,14 @@ def _state(brief_home, collector_warning):
     inbox_path = os.path.join(brief_home, "inbox.jsonl")
     questions, reports, pending, unread, q_last_status = fold_inbox(inbox_path)
     answers_by_question = fold_answers(os.path.join(brief_home, "answers.jsonl"))
+    still_pending, refilling = _split_refilling(brief_home, pending)  # F29
     payload = {
         "collector_warning": collector_warning,
         "unread_reports": {p: [report_view(r) for r in sort_reports_by_age(rs)]
                            for p, rs in group_by_project(unread).items()},
         "pending_questions": {p: [question_view(q) for q in sort_questions_by_severity(qs)]
-                              for p, qs in group_by_project(pending).items()},
+                              for p, qs in group_by_project(still_pending).items()},
+        "refilling_questions": _group_refilling_by_project(refilling),
         "unconsumed_projects": unconsumed_projects(questions, answers_by_question),
     }
     return payload, questions, q_last_status, answers_by_question

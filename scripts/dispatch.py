@@ -16,7 +16,11 @@ and runs config.json's `notify` once.
 `--refill <question_id>` (F28) re-dispatches a single pending question to a
 narrowly-scoped session that investigates missing context and refiles a
 self-contained replacement, then cancels the original; see
-refill_question()'s docstring.
+refill_question()'s docstring. F29 adds two config.json `dispatch` knobs that
+tweak the prompts this file builds: `context_language` (a free-form language
+requirement added to the refill prompt) and `plain_language` (a
+non-technical-writing requirement added to the refill prompt when "refill" or
+"all", and to the regular dispatch prompt too when "all").
 
 Stdlib only. Three knobs exist purely for testing without a real `claude`
 binary, a real ~/.agent-brief, or a real ~/.claude.json:
@@ -210,14 +214,55 @@ def tasks_for(
     return tasks
 
 
-def build_prompt(project: str, unconsumed: list[dict[str, Any]], delegate: bool = False) -> str:
+PLAIN_LANGUAGE_VALUES = ("all", "refill", "off")
+
+
+def context_language_for(config: dict[str, Any]) -> str | None:
+    """dispatch.context_language (F29): a free-form language description
+    (e.g. "Traditional Chinese (keep technical terms in English)") applied
+    to a context-refill session's replacement question, or None when
+    missing/null/not a non-empty string."""
+    dispatch_cfg = config.get("dispatch")
+    if not isinstance(dispatch_cfg, dict):
+        return None
+    value = dispatch_cfg.get("context_language")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def plain_language_for(config: dict[str, Any]) -> str:
+    """dispatch.plain_language (F29): "all" | "refill" | "off", defaulting
+    to "off" on a missing key or any other value."""
+    dispatch_cfg = config.get("dispatch")
+    if not isinstance(dispatch_cfg, dict):
+        return "off"
+    value = dispatch_cfg.get("plain_language")
+    return value if value in PLAIN_LANGUAGE_VALUES else "off"
+
+
+def build_prompt(project: str, unconsumed: list[dict[str, Any]], delegate: bool = False,
+                  config: dict[str, Any] | None = None) -> str:
     # ponytail: same prompt for headless and --watch; the BRIEF_SUBMIT
     # sentence is harmless in an interactive window (user just sees it).
+    config = config or {}
     delegation = DELEGATION_SENTENCE if delegate else NO_DELEGATION_SENTENCE
     if unconsumed:
         answers_block = "\n".join(entry["line"] for entry in unconsumed)
     else:
         answers_block = "(no unconsumed answers for this project)"
+
+    # F29: plain_language "all" also covers regular dispatch (not just
+    # refill) - the language always comes from context_language, so this
+    # sentence never hardcodes one itself (per docs/schema.md's contract:
+    # plain_language "off"/"refill" leave this prompt byte-for-byte the
+    # same as before F29).
+    plain_block = ""
+    if plain_language_for(config) == "all":
+        language = context_language_for(config)
+        in_language = f" in {language}" if language else ""
+        plain_block = (
+            "\n\nWrite any question or report you file via brief-submit in "
+            f"plain language{in_language}, for a non-technical reader, avoiding jargon.\n"
+        )
 
     return (
         f'You are a headless Claude Code session dispatched by agent-brief-me '
@@ -226,6 +271,7 @@ def build_prompt(project: str, unconsumed: list[dict[str, Any]], delegate: bool 
         f"{answers_block}\n\n"
         f"{delegation}\n\n"
         f"{BRIEF_SUBMIT_SENTENCE}\n"
+        f"{plain_block}"
     )
 
 
@@ -486,15 +532,31 @@ def refill_claude_args(context_model: str, brief_home: str, session_id: str | No
     return ["--resume", session_id] + args if session_id else args
 
 
-def build_refill_prompt(question: dict[str, Any], raw_line: str) -> str:
-    return REFILL_PROMPT.format(qid=question["id"], raw_line=raw_line, title=question["title"])
+def build_refill_prompt(question: dict[str, Any], raw_line: str, config: dict[str, Any] | None = None) -> str:
+    """The context-refill prompt (F28), plus F29's two optional additions -
+    a language requirement (dispatch.context_language) and a plain-language
+    requirement (dispatch.plain_language "refill"/"all") - each appended as
+    its own sentence, in that order. `config=None` (or one with neither key
+    set) reproduces F28's prompt byte-for-byte."""
+    config = config or {}
+    prompt = REFILL_PROMPT.format(qid=question["id"], raw_line=raw_line, title=question["title"])
+    language = context_language_for(config)
+    if language:
+        prompt += f"\n\nWrite the new question's title and body in {language}."
+    if plain_language_for(config) in ("all", "refill"):
+        prompt += (
+            "\n\nWrite the new question's title and body in plain language, "
+            "for a non-technical reader, avoiding jargon."
+        )
+    return prompt
 
 
-def is_refill_running(brief_home: str, project: str, title: str) -> bool:
-    """True when an unfinished batch (no `finished` line, pid still alive)
-    already carries a `kind: "refill"` task for this exact (project, title)
-    - the dedup rule that stops a second click from spawning a duplicate
-    session (F28)."""
+def find_running_refill(brief_home: str, project: str, title: str) -> dict[str, Any] | None:
+    """The `started` dispatches.jsonl record for an unfinished batch (no
+    `finished` line, pid still alive) that already carries a `kind: "refill"`
+    task for this exact (project, title), or None. Refactored out of
+    is_refill_running (F29) so the Web UI can also read the record's
+    `started_at` to render the "waiting on context" card state."""
     path = dispatches_path(brief_home)
     finished_batches = {r["batch_id"] for r in (json.loads(l) for l in iter_lines(path))
                         if r.get("type") == "finished"}
@@ -507,8 +569,15 @@ def is_refill_running(brief_home: str, project: str, title: str) -> bool:
         tasks = record.get("tasks", [])
         matches = any(isinstance(t, dict) and t.get("kind") == "refill" and t.get("title") == title for t in tasks)
         if matches and pid_exit_code(record.get("pid")) is None:
-            return True
-    return False
+            return record
+    return None
+
+
+def is_refill_running(brief_home: str, project: str, title: str) -> bool:
+    """True when an unfinished batch already carries a `kind: "refill"` task
+    for this exact (project, title) - the dedup rule that stops a second
+    click from spawning a duplicate session (F28)."""
+    return find_running_refill(brief_home, project, title) is not None
 
 
 def refill_question(brief_home: str, claude_cmd: str, question_id: str) -> dict[str, Any]:
@@ -530,7 +599,7 @@ def refill_question(brief_home: str, claude_cmd: str, question_id: str) -> dict[
         return {"ok": False, "error": f"{project}: unknown project"}
 
     args = refill_claude_args(context_model_for(config), brief_home, session_id=question.get("session_id"))
-    prompt = build_refill_prompt(question, raw_line)
+    prompt = build_refill_prompt(question, raw_line, config)
     log_path = make_log_path(brief_home, project)
     try:
         proc = spawn(claude_cmd, path, prompt, log_path, args)
@@ -619,7 +688,7 @@ def main(argv: list[str]) -> int:
             continue
 
         unconsumed = unconsumed_answers_for(name, question_project, answers_by_question)
-        prompt = build_prompt(name, unconsumed, delegate=bool(settings["delegate"]))
+        prompt = build_prompt(name, unconsumed, delegate=bool(settings["delegate"]), config=config)
         log_path = make_log_path(brief_home, name)
 
         if watch:

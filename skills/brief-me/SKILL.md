@@ -21,16 +21,25 @@ Runs the configured collector first (a failing collector is reported in
 
 - `unread_reports`: `{project: [ {id, project, summary, severity?, session_id?, age} ]}`
 - `pending_questions`: `{project: [ {id, project, title, body, severity, session_id?, options, age} ]}`
-  (projects alphabetical; questions high severity first, then oldest first)
+  (projects alphabetical; questions high severity first, then oldest first) -
+  a question with a context-refill already in flight for it is never in
+  here (F29); it shows up under `refilling_questions` instead.
+- `refilling_questions`: `{project: [ {id, project, title, severity?, age,
+  refill_started_at, refill_elapsed_seconds} ]}` (F29) - pending questions
+  currently waiting on a context-refill session (dispatched via "Add
+  context" below, or from the Web UI); not answerable this round.
 - `unconsumed_projects`: projects with an answer not yet used by dispatch
 - `requeued`: `{project: [task title, ...]}` - answers from a dispatch whose
   session ended without ever filing a report, just re-queued as unconsumed
   (F24); empty when nothing was requeued this run
 
 If `collector_warning` is set, show it. If `requeued` is non-empty, say
-"上次派工未回報，已重新排入" and list each project's task titles. If both
-`unread_reports` and `pending_questions` are empty, say the inbox is empty
-and stop.
+"上次派工未回報，已重新排入" and list each project's task titles. If
+`refilling_questions` is non-empty, say how many questions are being skipped
+this round because a context-refill session is already in flight for them
+(they will come back to `pending_questions` once that session finishes or
+its process dies). If both `unread_reports` and `pending_questions` are
+empty, say the inbox is empty and stop.
 
 ## Step 2: Show unread reports
 

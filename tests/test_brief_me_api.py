@@ -692,6 +692,62 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(fin["report_note"], "waiting on review")
         self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 1})
 
+    # -- F29: refilling questions move out of pending_questions -------------
+    def _write_refill_dispatches(self, records):
+        with open(os.path.join(self.home, "dispatches.jsonl"), "w", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+
+    def test_state_moves_question_with_running_refill_to_refilling_questions(self):
+        title = "Pick a datastore"
+        qid = self._add_question(title=title)
+        batch = str(uuid.uuid4())
+        self._write_refill_dispatches([{
+            "type": "started", "batch_id": batch, "project": "demo", "pid": os.getpid(),
+            "started_at": brief_me._now(), "log": None,
+            "tasks": [{"feature": None, "kind": "refill", "title": title}],
+        }])
+
+        _, data = self._get("/api/state")
+
+        self.assertNotIn("demo", data.get("pending_questions", {}))
+        refilling = data["refilling_questions"]["demo"]
+        self.assertEqual(len(refilling), 1)
+        self.assertEqual(refilling[0]["id"], qid)
+        self.assertEqual(refilling[0]["title"], title)
+        self.assertIsInstance(refilling[0]["refill_elapsed_seconds"], int)
+
+    def test_state_dead_pid_refill_returns_question_to_pending(self):
+        title = "Pick a datastore"
+        qid = self._add_question(title=title)
+        batch = str(uuid.uuid4())
+        self._write_refill_dispatches([{
+            "type": "started", "batch_id": batch, "project": "demo", "pid": 999999999,
+            "started_at": brief_me._now(), "log": None,
+            "tasks": [{"feature": None, "kind": "refill", "title": title}],
+        }])
+
+        _, data = self._get("/api/state")
+
+        self.assertEqual(data.get("refilling_questions", {}), {})
+        self.assertEqual(data["pending_questions"]["demo"][0]["id"], qid)
+
+    def test_state_finished_refill_batch_returns_question_to_pending(self):
+        title = "Pick a datastore"
+        qid = self._add_question(title=title)
+        batch = str(uuid.uuid4())
+        self._write_refill_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": os.getpid(),
+             "started_at": brief_me._now(), "log": None,
+             "tasks": [{"feature": None, "kind": "refill", "title": title}]},
+            {"type": "finished", "batch_id": batch, "finished_at": brief_me._now(), "exit_codes": [0]},
+        ])
+
+        _, data = self._get("/api/state")
+
+        self.assertEqual(data.get("refilling_questions", {}), {})
+        self.assertEqual(data["pending_questions"]["demo"][0]["id"], qid)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

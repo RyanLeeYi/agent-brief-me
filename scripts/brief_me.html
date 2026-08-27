@@ -215,6 +215,14 @@
   .dismiss-link{ color:var(--danger-2); cursor:pointer; font-size:13px; min-height:28px; }
   .dismiss-link:hover{ text-decoration:underline; }
 
+  /* F29: "Need more context" button, at the far right of the options row */
+  .opt-btn-refill{ margin-left:auto; }
+  .opt-btn-refill svg{ color:var(--warning); }
+
+  /* F29: State 2 - a pending question whose context-refill is in flight */
+  .question-card-refilling{ border-left:3px solid var(--warning); }
+  .badge-refilling{ background:var(--warning); color:#fff; }
+
   /* ---------- report card ---------- */
   .report-card{ background:var(--bg-card); border:1px solid var(--border); border-radius:8px; }
   .report-summary-row{
@@ -531,6 +539,7 @@
   function emptyState() {
     return {
       collector_warning: null, unread_reports: {}, pending_questions: {},
+      refilling_questions: {},
       unconsumed_projects: [], projects: [], unconsumed_counts: {}, dismissed: {}, running: {},
       sessions: { running: [], finished: [], finished_hidden: 0 }
     };
@@ -654,6 +663,19 @@
   function getVisibleQuestions() {
     if (state.currentProject === '__all__') return getAllQuestionsFlat();
     return (state.data.pending_questions[state.currentProject] || []).map(function (q) {
+      return { question: q, project: state.currentProject };
+    });
+  }
+  function getVisibleRefilling() {
+    var rq = state.data.refilling_questions || {};
+    if (state.currentProject === '__all__') {
+      var out = [];
+      Object.keys(rq).forEach(function (project) {
+        rq[project].forEach(function (q) { out.push({ question: q, project: project }); });
+      });
+      return out;
+    }
+    return (rq[state.currentProject] || []).map(function (q) {
       return { question: q, project: state.currentProject };
     });
   }
@@ -899,17 +921,36 @@
 
   function renderQuestions() {
     var items = getVisibleQuestions();
+    var refilling = getVisibleRefilling();
     questionsCountEl.textContent = items.length;
-    if (!items.length) {
+    if (!items.length && !refilling.length) {
       questionsListEl.innerHTML = '<p class="empty-state">No pending questions.</p>';
       return;
     }
-    questionsListEl.innerHTML = items.map(function (e) { return questionCardHTML(e.question, e.project); }).join('');
+    questionsListEl.innerHTML =
+      items.map(function (e) { return questionCardHTML(e.question, e.project); }).join('') +
+      refilling.map(function (e) { return refillingCardHTML(e.question, e.project); }).join('');
     items.forEach(function (e) {
       var card = questionsListEl.querySelector('.question-card[data-id="' + CSS.escape(e.question.id) + '"]');
       var qui = getQUI(e.question.id, e.question);
       refreshCardVisual(card, qui, e.question);
     });
+  }
+
+  // F29: State 2 - a pending question whose context-refill is already in
+  // flight. No answer controls at all (Skip/Add context/Dismiss are all
+  // meaningless while the replacement question is being drafted).
+  function refillingCardHTML(q, project) {
+    return '' +
+      '<article class="question-card question-card-refilling" data-id="' + escapeHtml(q.id) + '">' +
+        '<div class="card-meta">' +
+          '<span class="badge badge-refilling">refilling</span>' +
+          '<span class="card-project">' + escapeHtml(project) + '</span>' +
+          '<span class="card-age">started ' + escapeHtml(elapsedString(q.refill_elapsed_seconds)) + ' ago</span>' +
+        '</div>' +
+        '<h3 class="card-title">' + escapeHtml(q.title) + '</h3>' +
+        '<p class="card-body-text">Adding context in a background session - see Sessions for progress.</p>' +
+      '</article>';
   }
 
   function questionCardHTML(question, project) {
@@ -942,6 +983,14 @@
           '<div class="opt-row">' +
             optionsHtml +
             '<button type="button" class="opt-btn" data-action="skip">Skip for now</button>' +
+            '<button type="button" class="opt-btn opt-btn-refill" data-action="refill">' +
+              '<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">' +
+                '<circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.3" fill="none"/>' +
+                '<circle cx="7" cy="4.6" r="0.9" fill="currentColor"/>' +
+                '<path d="M7 6.5v3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>' +
+              '</svg>' +
+              'Need more context' +
+            '</button>' +
           '</div>' +
           '<div class="other-row">' +
             '<button type="button" class="opt-btn" data-action="other">' +
@@ -956,7 +1005,6 @@
           '<div class="card-footer-row">' +
             '<div class="card-footer-left">' +
               resumeHtml +
-              '<button type="button" class="btn-link" data-action="refill">Add context</button>' +
             '</div>' +
             '<button type="button" class="dismiss-link" data-action="dismiss" title="Permanently discard">Dismiss question</button>' +
           '</div>' +

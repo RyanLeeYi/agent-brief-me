@@ -94,7 +94,7 @@ Repeat until the user is done:
 ## Step 3: Dispatch settings
 
 These control how `scripts/dispatch.py` launches worker sessions. Ask the
-five questions below with AskUserQuestion, then read `config.json`, set the
+seven questions below with AskUserQuestion, then read `config.json`, set the
 answers under its `dispatch` object (create it if missing, keep any other
 keys), and write the whole file back. On a rerun, show the current value of
 each as the default option.
@@ -123,6 +123,28 @@ each as the default option.
    context" button, or brief-me's per-question review): a lightweight
    session that reads the project and refiles a self-contained replacement
    question. It never edits the repo, so a cheap model is usually enough.
+6. **Reply language for context-refill replacement questions?** -> `context_language`
+   (F29): `null` (default; no requirement, worker replies in whatever
+   language it would otherwise use) or one of the presets below - each
+   composes into a single free-form English description string written
+   verbatim to `context_language`:
+   - Not specified -> `null`
+   - Traditional Chinese -> `"Traditional Chinese"`
+   - Simplified Chinese -> `"Simplified Chinese"`
+   - English -> `"English"`
+   - Japanese -> `"Japanese"`
+
+   For any preset except "Not specified" or "English", ask a follow-up:
+   **keep technical terms in English?** If yes, append
+   `" (keep technical terms in English)"` to the string above (e.g.
+   `"Traditional Chinese (keep technical terms in English)"`). This is the
+   same preset list and composition rule the Web UI's Settings view uses, so
+   a value set by either surface parses back into the other's dropdown.
+7. **Plain-language requirement?** -> `plain_language` (F29): `"off"`
+   (default; no change to worker prompts), `"refill"` (context-refill
+   replacement questions must be written in plain, non-technical language),
+   or `"all"` (that requirement also applies to every question/report a
+   regular dispatched worker files via `brief-submit`).
 
 ## Step 4: Agent-side protocol sentence
 

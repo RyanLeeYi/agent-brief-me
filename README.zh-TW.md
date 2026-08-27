@@ -134,7 +134,9 @@ Report 收合成一列（專案、`F12 passing` 這類 feature 晶片、摘要�
   "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
   "model": null,
   "delegate": true,
-  "context_model": "sonnet"
+  "context_model": "sonnet",
+  "context_language": null,
+  "plain_language": "off"
 }
 ```
 
@@ -146,6 +148,8 @@ Report 收合成一列（專案、`F12 passing` 這類 feature 晶片、摘要�
 | `model` | worker 的 `--model`；`null` 用 Claude Code 預設 |
 | `delegate` | `false` 要 worker 自己做、並封鎖 `Agent` 工具 - repo 還沒有 subagent 委派規則時用這個 |
 | `context_model` | 補脈絡 session（收件匣的「Add context」動作／`dispatch.py --refill`）用的 `--model`；缺鍵或 null 預設 `"sonnet"`，與上面的 `model` 各自獨立 - `--resume` 沒有快取、全價計算，建議選便宜的模型 |
+| `context_language` | 自由格式的語言描述（例如 `"Traditional Chinese (keep technical terms in English)"`），加進補脈絡 session 的 prompt，要求其重投卡的 title／body 用該語言撰寫；`null`（預設）不改變該 prompt |
+| `plain_language` | `"off"`（預設，不改變）、`"refill"`（補脈絡重投卡須用白話、非技術語言）、或 `"all"`（同一要求也套用到一般 worker 透過 `brief-submit` 投遞的每個 question／report，且在 `context_language` 有值時一併要求該語言） |
 
 `~/.agent-brief` 一律透過 `--add-dir` 帶入，讓 `brief-submit` 能從專案內寫收件匣。缺鍵用上面的預設值；`permission_mode` 值不認得時退回 `auto`。
 

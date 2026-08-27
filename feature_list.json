@@ -2,5 +2,27 @@
  "project": "agent-brief-me",
  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
  "archive": "docs/archive/features.jsonl",
- "features": []
+ "features": [
+  {
+   "id": "F31",
+   "name": "Sessions 列收合，展開顯示派出的問題與答案",
+   "status": "failing",
+   "rationale": "Sessions 檢視目前把 task chips 與按鈕全攤在列上，看不到該 session 究竟帶著哪些問題與使用者給的答案；要回想當時裁決得回 inbox 翻。改成預設收合、點開才顯示問題原文與答案，資訊密度與可追溯性都變好。task 物件只存 (title, kind, feature) 沒存 question_id，配對沿用 _requeue_candidates 既有的 (project, title) 對 inbox question 的方式，不改 dispatches.jsonl schema。",
+   "acceptance": [
+    "Sessions 檢視的 finished 列預設收合，只顯示 outcome、project、任務數（或單一任務時該任務標題）、took、ended；點列展開、再點一次收合。running 卡片同樣可展開收合。",
+    "展開後逐 task 顯示：問題 title、問題內文、該問題最後一筆答案原文（不論 consumed 與否）。後端在 /api/state 的 sessions（running 與 finished 皆是）為每個 task 附上配對到的 question 內文與最後答案；配對用 (project, title) 對 inbox.jsonl 的 question（同 _requeue_candidates 的定義），配不到的 task 只顯示 title 並標註 no matching question。",
+    "展開狀態下原有操作（copy resume、open log、report 連結）仍可用，點這些按鈕不觸發收合切換。",
+    "手機版可展開收合，觸控目標至少 44px。",
+    "測試（stdlib unittest，BRIEF_HOME 暫存目錄）至少涵蓋：sessions_view 為可配對的 task 附上問題內文與答案、配不到的 task 不帶這兩個欄位、running 與 finished 都帶。既有測試全綠。",
+    "新增與修改的對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
+   ],
+   "touches": [
+    "scripts/brief_me.py",
+    "scripts/brief_me.html",
+    "tests/test_brief_me_api.py",
+    "tests/test_brief_me_html.py"
+   ],
+   "signed_off": true
+  }
+ ]
 }

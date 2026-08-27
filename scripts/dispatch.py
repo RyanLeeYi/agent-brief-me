@@ -46,7 +46,8 @@ MAX_LINE_BYTES = 8 * 1024
 
 # Windows CreateProcess flags shared by every background/detached child
 # (spawn, spawn_waiter) so a process-group-based stop of the dispatching
-# service (e.g. mission-control) does not sweep up sessions that must
+# service (e.g. an external process manager) does not sweep up sessions
+# that must
 # outlive it (2026-08-27 incident: a manual stop killed 5 in-flight
 # headless sessions started moments earlier).
 DETACHED_PROCESS = 0x00000008

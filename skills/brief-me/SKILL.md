@@ -51,13 +51,19 @@ For each project, for each question in the given order, call
 AskUserQuestion with `title` as the header, `body` (plus project, severity,
 and the `resume: claude --resume <session_id>` hint when present) as the
 supporting text, and `options` as the choices in the given order
-(recommendation first when present), then append "Dismiss" and "Skip" as
-the last two options yourself - `load` no longer includes them. When
-the question has `multi: true`, pass `multiSelect: true` so several choices
-can be picked at once (Dismiss/Skip still stand alone). Do not add a "type
-your own" option - the tool already accepts free text.
+(recommendation first when present), then append "Add context", "Dismiss",
+and "Skip" as the last three options yourself - `load` no longer includes
+them. When the question has `multi: true`, pass `multiSelect: true` so
+several choices can be picked at once (Add context/Dismiss/Skip still stand
+alone). Do not add a "type your own" option - the tool already accepts free
+text.
 
 - **Skip** picked: write nothing; the question stays pending for next time.
+- **Add context** picked (F28): dispatch a context-refill session instead of
+  writing an answer - `python scripts/dispatch.py --refill <question_id>`.
+  Report its JSON result (dispatched, or `already_running: true` if one was
+  already in flight) and move to the next question; this one stays pending
+  until the refill session's replacement question and cancel land.
 - **Dismiss** picked: drop it for good, no answer written:
   `python scripts/brief_me.py dismiss <question_id>`
 - **A listed option** picked: `--chosen "<exact option text>"`; for a

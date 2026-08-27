@@ -133,7 +133,8 @@ Report 收合成一列（專案、`F12 passing` 這類 feature 晶片、摘要�
   "permission_mode": "auto",
   "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
   "model": null,
-  "delegate": true
+  "delegate": true,
+  "context_model": "sonnet"
 }
 ```
 
@@ -144,6 +145,7 @@ Report 收合成一列（專案、`F12 passing` 這類 feature 晶片、摘要�
 | `allowed_tools` | `auto` 模式下的 `--allowedTools`，逗號分隔 |
 | `model` | worker 的 `--model`；`null` 用 Claude Code 預設 |
 | `delegate` | `false` 要 worker 自己做、並封鎖 `Agent` 工具 - repo 還沒有 subagent 委派規則時用這個 |
+| `context_model` | 補脈絡 session（收件匣的「Add context」動作／`dispatch.py --refill`）用的 `--model`；缺鍵或 null 預設 `"sonnet"`，與上面的 `model` 各自獨立 - `--resume` 沒有快取、全價計算，建議選便宜的模型 |
 
 `~/.agent-brief` 一律透過 `--add-dir` 帶入，讓 `brief-submit` 能從專案內寫收件匣。缺鍵用上面的預設值；`permission_mode` 值不認得時退回 `auto`。
 

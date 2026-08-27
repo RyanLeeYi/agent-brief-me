@@ -232,6 +232,32 @@ order as the prompt (empty array if none). Records written before this field
 existed have no `tasks` key; readers must treat a missing `tasks` as `[]`,
 never error on it.
 
+### Context-refill dispatch (F28)
+
+`scripts/dispatch.py --refill <question_id>` (also reachable from the Web
+UI's "Add context" button and brief-me's per-question review) spawns one
+narrowly-scoped session for a single pending question - `--resume
+<session_id>` when the question carries one, otherwise a fresh `claude -p`
+in the project directory - to investigate context and file a self-contained
+replacement question, then cancel the original. Its `started` record's
+`tasks` holds exactly one `{feature, kind, title}` object with `kind:
+"refill"` (feature parsed the same way as any other task) and `title` equal
+to the original question's title; no answer is consumed and the refill
+dispatch itself never writes a `question`/`answer`/`status` line - only the
+spawned session does, once its replacement question is filed. A refill is
+skipped (no new session spawned, no new `started` line) while an unfinished
+batch already carries a `refill` task with the same `(project, title)`.
+`--model` for these sessions comes from `dispatch.context_model` (default
+`"sonnet"` when missing or null), independent of `dispatch.model` used for
+regular worker sessions; the allowlist is narrower too (`Bash,Read,Glob,Grep,
+Skill` - no `Edit`/`Write`). Existing readers need no special-case for
+`kind: "refill"`: the Sessions view already renders any task generically,
+and F24's requeue check ("was this task's title ever answered and
+consumed") simply never matches a refill task (its original question is
+never answered), so a refill batch always gets its one `requeued` line with
+nothing to requeue, like any other batch whose tasks the collector can no
+longer resolve.
+
 A project is *running* when it has a `started` line whose batch has no
 `finished` line and whose `pid` is still alive (unknown counts as alive);
 `GET /api/state` exposes that as `running: {project: {started_at,

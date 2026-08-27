@@ -13,6 +13,11 @@ for a dispatched session to finish: every spawn is recorded in
 dispatches.jsonl and a detached waiter (`--wait`) records the batch's end
 and runs config.json's `notify` once.
 
+`--refill <question_id>` (F28) re-dispatches a single pending question to a
+narrowly-scoped session that investigates missing context and refiles a
+self-contained replacement, then cancels the original; see
+refill_question()'s docstring.
+
 Stdlib only. Three knobs exist purely for testing without a real `claude`
 binary, a real ~/.agent-brief, or a real ~/.claude.json:
 - BRIEF_HOME: overrides the inbox home directory (default ~/.agent-brief).
@@ -417,6 +422,131 @@ def spawn_waiter(brief_home: str, batch_id: str, pids: list[int]) -> None:
     subprocess.Popen(cmd, **kwargs)
 
 
+# --------------------------------------------------------- context-refill --
+# F28: re-dispatch a single pending question to a narrowly-scoped session
+# that investigates missing context and refiles a self-contained
+# replacement, then cancels the original. Reached via this file's `--refill
+# <question_id>` CLI, the Web UI's "Add context" button, and brief-me's
+# per-question review.
+
+REFILL_ALLOWED_TOOLS = "Bash,Read,Glob,Grep,Skill"  # no Edit/Write: a refill
+# session investigates and files a replacement question, it never touches
+# the repo.
+
+REFILL_PROMPT = (
+    'You are a headless Claude Code session dispatched by agent-brief-me to add '
+    'missing context to one pending inbox question, id "{qid}".\n\n'
+    'Original question (raw JSONL record, for full context):\n{raw_line}\n\n'
+    'Title: "{title}"\n\n'
+    "Investigate whatever this project needs (read files, recent history, prior "
+    "discussion) to fill the gaps that keep the current card from being "
+    "decidable by a reader with no repo access. Then invoke "
+    'Skill(skill="brief-submit") to file ONE new, self-contained question for '
+    "the same project, with body written in brief-submit's body template "
+    "exactly:\n\n"
+    "Context: <why this decision is needed now - one sentence>\n"
+    "Options:\n"
+    "- <choice 1>: <its consequence - one sentence>\n"
+    "- <choice 2>: <its consequence - one sentence>\n"
+    "Recommendation: <choice> - <the reason - one sentence>\n\n"
+    "Once the new question is filed successfully, append one status line to "
+    "inbox.jsonl cancelling the ORIGINAL question: "
+    '{{"type": "status", "ref": "{qid}", "status": "cancelled", "at": <now, UTC '
+    "ISO8601>}}, using the atomic append rule in docs/schema.md. Do nothing "
+    "else: do not answer the original question yourself, do not edit any "
+    "file, and do not pick up unrelated work."
+)
+
+
+def find_question(inbox_path: str, question_id: str):
+    """The `question` record with id == question_id in inbox.jsonl, and its
+    raw line, or (None, None) if no such question exists."""
+    for line in iter_lines(inbox_path):
+        record = json.loads(line)
+        if record.get("type") == "question" and record.get("id") == question_id:
+            return record, line
+    return None, None
+
+
+def context_model_for(config: dict[str, Any]) -> str:
+    """dispatch.context_model, defaulting to "sonnet" when missing or null
+    (F28) - independent of dispatch.model, which regular workers use."""
+    dispatch_cfg = config.get("dispatch")
+    if not isinstance(dispatch_cfg, dict):
+        dispatch_cfg = {}
+    return dispatch_cfg.get("context_model") or "sonnet"
+
+
+def refill_claude_args(context_model: str, brief_home: str, session_id: str | None = None) -> list[str]:
+    """Flags for a context-refill session: read-only tool allowlist (no
+    Edit/Write - see REFILL_ALLOWED_TOOLS), its own --model, and --resume
+    prepended when the original question carries a session_id."""
+    args = ["--permission-mode", "auto", "--allowedTools", REFILL_ALLOWED_TOOLS,
+            "--add-dir", brief_home, "--model", str(context_model), "--disallowedTools", "Agent"]
+    return ["--resume", session_id] + args if session_id else args
+
+
+def build_refill_prompt(question: dict[str, Any], raw_line: str) -> str:
+    return REFILL_PROMPT.format(qid=question["id"], raw_line=raw_line, title=question["title"])
+
+
+def is_refill_running(brief_home: str, project: str, title: str) -> bool:
+    """True when an unfinished batch (no `finished` line, pid still alive)
+    already carries a `kind: "refill"` task for this exact (project, title)
+    - the dedup rule that stops a second click from spawning a duplicate
+    session (F28)."""
+    path = dispatches_path(brief_home)
+    finished_batches = {r["batch_id"] for r in (json.loads(l) for l in iter_lines(path))
+                        if r.get("type") == "finished"}
+    for line in iter_lines(path):
+        record = json.loads(line)
+        if record.get("type") != "started" or record.get("project") != project:
+            continue
+        if record.get("batch_id") in finished_batches:
+            continue
+        tasks = record.get("tasks", [])
+        matches = any(isinstance(t, dict) and t.get("kind") == "refill" and t.get("title") == title for t in tasks)
+        if matches and pid_exit_code(record.get("pid")) is None:
+            return True
+    return False
+
+
+def refill_question(brief_home: str, claude_cmd: str, question_id: str) -> dict[str, Any]:
+    """F28 entry point: re-dispatch one pending question. Writes only a
+    `started` dispatches.jsonl line - never an answer or status line for the
+    original question (that is the dispatched session's job, once its
+    replacement question is filed)."""
+    question, raw_line = find_question(os.path.join(brief_home, "inbox.jsonl"), question_id)
+    if question is None:
+        return {"ok": False, "error": f"unknown question id: {question_id}"}
+
+    project, title = question["project"], question["title"]
+    if is_refill_running(brief_home, project, title):
+        return {"ok": True, "already_running": True, "project": project}
+
+    config = load_config(brief_home)
+    path = {p["name"]: p["path"] for p in config.get("projects", [])}.get(project)
+    if path is None:
+        return {"ok": False, "error": f"{project}: unknown project"}
+
+    args = refill_claude_args(context_model_for(config), brief_home, session_id=question.get("session_id"))
+    prompt = build_refill_prompt(question, raw_line)
+    log_path = make_log_path(brief_home, project)
+    try:
+        proc = spawn(claude_cmd, path, prompt, log_path, args)
+    except OSError as exc:
+        return {"ok": False, "error": f"spawn failed: {exc}"}
+
+    batch_id = str(uuid.uuid4())
+    task = {**classify_task(title), "kind": "refill"}
+    atomic_append_line(dispatches_path(brief_home), {
+        "type": "started", "batch_id": batch_id, "project": project, "pid": proc.pid,
+        "started_at": _now(), "log": log_path, "tasks": [task],
+    })
+    spawn_waiter(brief_home, batch_id, [proc.pid])
+    return {"ok": True, "project": project, "pid": proc.pid, "log": log_path}
+
+
 def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
     codes: dict[int, int] = {}
     while len(codes) < len(pids):
@@ -449,6 +579,14 @@ def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
 def main(argv: list[str]) -> int:
     if argv[:1] == ["--wait"]:
         return wait_batch(get_brief_home(), argv[1], [int(p) for p in argv[2:]])
+    if argv[:1] == ["--refill"]:
+        if len(argv) != 2:
+            print(json.dumps({"ok": False, "error": "usage: dispatch.py --refill <question_id>"}))
+            return 2
+        claude_cmd = os.environ.get("BRIEF_CLAUDE_CMD", "claude")
+        result = refill_question(get_brief_home(), claude_cmd, argv[1])
+        print(json.dumps(result))
+        return 0 if result.get("ok") else 1
     watch_flag, no_watch_flag = "--watch" in argv, "--no-watch" in argv
     argv = [a for a in argv if a not in ("--watch", "--no-watch")]
     if not argv or (watch_flag and no_watch_flag):

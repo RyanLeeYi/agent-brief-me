@@ -94,7 +94,7 @@ Repeat until the user is done:
 ## Step 3: Dispatch settings
 
 These control how `scripts/dispatch.py` launches worker sessions. Ask the
-four questions below with AskUserQuestion, then read `config.json`, set the
+five questions below with AskUserQuestion, then read `config.json`, set the
 answers under its `dispatch` object (create it if missing, keep any other
 keys), and write the whole file back. On a rerun, show the current value of
 each as the default option.
@@ -117,6 +117,12 @@ each as the default option.
    the prompt authorizes subagents under the user's own delegation rules) or
    `false` (prompt says to work solo and `Agent` is added to
    `--disallowedTools`; pick this if the harness has no delegation rules yet).
+5. **Model for context-refill sessions?** -> `context_model`: `"sonnet"`
+   (default) or another model name/alias. Used only when the user dispatches
+   a context-refill for one vague pending question (from the Web UI's "Add
+   context" button, or brief-me's per-question review): a lightweight
+   session that reads the project and refiles a self-contained replacement
+   question. It never edits the repo, so a cheap model is usually enough.
 
 ## Step 4: Agent-side protocol sentence
 

@@ -205,6 +205,7 @@
   .other-error-msg{ display:block; color:var(--danger-2); font-size:12px; margin-top:4px; }
 
   .card-footer-row{ display:flex; align-items:center; justify-content:space-between; margin-top:12px; }
+  .card-footer-left{ display:flex; align-items:center; gap:8px; }
   .resume-cmd{
     font-family:'IBM Plex Mono', Consolas, monospace; font-size:12px;
     color:var(--text-secondary); background:var(--bg); border:1px solid var(--border);
@@ -953,7 +954,10 @@
             '</div>' +
           '</div>' +
           '<div class="card-footer-row">' +
-            resumeHtml +
+            '<div class="card-footer-left">' +
+              resumeHtml +
+              '<button type="button" class="btn-link" data-action="refill">Add context</button>' +
+            '</div>' +
             '<button type="button" class="dismiss-link" data-action="dismiss" title="Permanently discard">Dismiss question</button>' +
           '</div>' +
         '</div>' +
@@ -986,6 +990,20 @@
     card.classList.toggle('dismiss-pending', !!qui.dismissPending);
   }
 
+  function onRefillClick(btn, qid) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    apiPost('/api/refill', { id: qid }).then(function (res) {
+      toast(res.already_running
+        ? 'Context-refill already running for this question.'
+        : 'Context-refill dispatched - check Sessions for progress.', 'info');
+      return reloadState();
+    }).catch(function (err) {
+      toast('Context-refill failed: ' + err.message, 'error');
+      btn.disabled = false;
+    });
+  }
+
   function onQuestionsClick(e) {
     var card = e.target.closest('.question-card');
     if (!card) return;
@@ -1001,8 +1019,10 @@
     var dismissBtn = e.target.closest('[data-action="dismiss"]');
     var undoBtn = e.target.closest('[data-action="undo-dismiss"]');
     var copyBtn = e.target.closest('[data-action="copy-resume"]');
+    var refillBtn = e.target.closest('[data-action="refill"]');
 
     if (copyBtn) { copyText('claude --resume ' + copyBtn.dataset.session, copyBtn); return; }
+    if (refillBtn) { onRefillClick(refillBtn, qid); return; }
 
     if (optBtn) {
       var value = optBtn.dataset.value;

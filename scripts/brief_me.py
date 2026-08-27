@@ -879,6 +879,19 @@ def _run_dispatch(brief_home, projects, watch):
     return out
 
 
+def _run_refill(brief_home, question_id):
+    """Invoke `scripts/dispatch.py --refill <question_id>` (F28) and pass its
+    JSON result straight through. Never raises on a non-zero dispatch.py
+    exit or malformed stdout - both become an {"ok": False, "error": ...}
+    result instead."""
+    cmd = [sys.executable, os.path.join(SCRIPT_DIR, "dispatch.py"), "--refill", question_id]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        return json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"ok": False, "error": (result.stdout + result.stderr)[-2000:]}
+
+
 def _validate_answer_body(body, questions):
     """Returns an error string, or None if `body` is a valid /api/answer
     request per the F8 acceptance's 400 rules (checked in full before any
@@ -971,6 +984,7 @@ class BriefHTTPHandler(BaseHTTPRequestHandler):
                 "/api/read": self._post_read,
                 "/api/answer": self._post_answer,
                 "/api/reopen": self._post_reopen,
+                "/api/refill": self._post_refill,
             }.get(path)
             if handler is None:
                 self._json(404, {"ok": False, "error": "not found"})
@@ -1027,6 +1041,23 @@ class BriefHTTPHandler(BaseHTTPRequestHandler):
         for qid in ids:
             atomic_append_line(inbox_path, build_status(qid, "reopened"))
         self._json(200, {"ok": True, "reopened": ids})
+
+    def _post_refill(self):
+        """POST /api/refill {"id": <question_id>} (F28): dispatch a
+        context-refill session for one pending question. `id` unknown to
+        dispatch.py's --refill is the only 400; an already-running refill
+        for this question is a 200 with `already_running: true` (dedup,
+        not an error)."""
+        body, err = self._read_json_body()
+        if err:
+            self._json(400, {"ok": False, "error": err})
+            return
+        qid = body.get("id")
+        if not isinstance(qid, str) or not qid:
+            self._json(400, {"ok": False, "error": "id is required"})
+            return
+        result = _run_refill(get_brief_home(), qid)
+        self._json(200 if result.get("ok") else 400, result)
 
     def _post_answer(self):
         body, err = self._read_json_body()

@@ -134,7 +134,8 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
   "permission_mode": "auto",
   "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
   "model": null,
-  "delegate": false
+  "delegate": false,
+  "context_model": "sonnet"
 }
 ```
 
@@ -145,6 +146,7 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
 | `allowed_tools` | comma-separated `--allowedTools` value used with `auto` |
 | `model` | `--model` for the worker; `null` keeps Claude Code's default |
 | `delegate` | `false` (default) tells workers to work solo and blocks the `Agent` tool; `true` lets workers dispatch subagents - it requires your environment to already have the `baton-dispatch` skill and an `executor` agent type installed, neither of which ships with this plugin |
+| `context_model` | `--model` for context-refill sessions (the inbox's "Add context" action / `dispatch.py --refill`); defaults to `"sonnet"` when missing or null, independent of `model` above - pick something cheap, since a `--resume` session pays full price with no cache |
 
 `~/.agent-brief` is always passed via `--add-dir` so `brief-submit` can write the inbox from inside a project. Missing keys fall back to the defaults above; an unknown `permission_mode` falls back to `auto`.
 

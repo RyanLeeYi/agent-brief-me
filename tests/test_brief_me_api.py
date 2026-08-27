@@ -476,6 +476,55 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(data["requeued"], {})
         self.assertNotIn(batch, brief_me._requeued_batch_ids(self._dispatches_path()))
 
+    # -- GET /api/state requeue (F24/F33) --------------------------------
+    def test_api_state_requeues_started_batch_with_no_report(self):
+        """F33: GET /api/state runs F24's requeue too (previously CLI `load`
+        only), so a Web user's answer eaten by a session that died without
+        filing a report comes back as unconsumed."""
+        qid = self._add_question(project="demo", title="Pick one", choices=["A"])
+        self._consumed_answer(qid)
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": 999999,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None,
+             "tasks": [{"feature": None, "kind": "question", "title": "Pick one"}]},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+
+        status, data = self._get("/api/state")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(data["requeued"], {"demo": ["Pick one"]})
+        answers_by_question = brief_me.fold_answers(self._answers_path())
+        self.assertFalse(answers_by_question[qid]["consumed"])
+        self.assertIn(batch, brief_me._requeued_batch_ids(self._dispatches_path()))
+
+    def test_api_state_does_not_requeue_batch_twice(self):
+        """F33: idempotent via the same "requeued"-line dedup as CLI `load`
+        - a second GET must not requeue the same batch again."""
+        qid = self._add_question(project="demo", title="Pick one", choices=["A"])
+        self._consumed_answer(qid)
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": 999999,
+             "started_at": self._ts(now - timedelta(minutes=10)), "log": None,
+             "tasks": [{"feature": None, "kind": "question", "title": "Pick one"}]},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+
+        _, first_data = self._get("/api/state")
+        _, second_data = self._get("/api/state")
+
+        self.assertEqual(first_data["requeued"], {"demo": ["Pick one"]})
+        self.assertEqual(second_data["requeued"], {})
+        with open(self._dispatches_path(), encoding="utf-8") as f:
+            lines = [line for line in f if line.strip()]
+        self.assertEqual(len(lines), 3)  # started + finished + one requeued line
+
     # -- GET /api/state sessions (F14) ----------------------------------
     def test_state_sessions_running_finished_window_and_current(self):
         project_dir = tempfile.mkdtemp(prefix="brief-project-")
@@ -651,7 +700,43 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(finished["exit-proj"]["outcome"], "exit")
         for row in finished.values():
             self.assertIsNone(row["report_id"])
-        self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 2})
+        self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 2, "unknown": 0})
+
+    def test_state_sessions_outcome_unknown_for_null_exit_code(self):
+        """F33: an exit_codes entry that is JSON null (F32: the waiter could
+        not observe the death, e.g. the agent-brief service itself was
+        stopped mid-session) maps to outcome "unknown", not "ok" - and
+        finished_counts tallies it separately from report/killed."""
+        self._write_config(projects=[
+            {"name": "unknown-proj", "path": self.home},
+            {"name": "ok-proj", "path": self.home},
+        ])
+
+        def ts(dt):
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        now = datetime.now(timezone.utc)
+        started_at = now - timedelta(minutes=10)
+        finished_at = now - timedelta(minutes=1)
+        batch = str(uuid.uuid4())
+        records = [
+            {"type": "started", "batch_id": batch, "project": "unknown-proj",
+             "pid": 900200, "started_at": ts(started_at), "log": None, "tasks": []},
+            {"type": "started", "batch_id": batch, "project": "ok-proj",
+             "pid": 900201, "started_at": ts(started_at), "log": None, "tasks": []},
+            {"type": "finished", "batch_id": batch, "finished_at": ts(finished_at),
+             "exit_codes": [None, 0]},
+        ]
+        with open(os.path.join(self.home, "dispatches.jsonl"), "w", encoding="utf-8") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+
+        _, data = self._get("/api/state")
+        finished = {row["project"]: row for row in data["sessions"]["finished"]}
+        self.assertEqual(finished["unknown-proj"]["outcome"], "unknown")
+        self.assertIsNone(finished["unknown-proj"]["exit_code"])
+        self.assertEqual(finished["ok-proj"]["outcome"], "ok")
+        self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 0, "unknown": 1})
 
     def test_state_sessions_report_id_links_nearest_report_at_or_after_finish(self):
         """F20: report_id picks the earliest report at/after finished_at (an
@@ -690,7 +775,7 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(fin["outcome"], "ctrl_c")
         self.assertEqual(fin["report_id"], later_id)
         self.assertEqual(fin["report_note"], "waiting on review")
-        self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 1})
+        self.assertEqual(data["sessions"]["finished_counts"], {"report": 0, "killed": 1, "unknown": 0})
 
     # -- GET /api/state sessions tasks_qa (F31) --------------------------
     def test_state_sessions_tasks_qa_matched_and_unmatched(self):

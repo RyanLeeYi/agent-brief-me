@@ -34,7 +34,8 @@ Runs the configured collector first (a failing collector is reported in
   (F24); empty when nothing was requeued this run
 
 If `collector_warning` is set, show it. If `requeued` is non-empty, say
-"上次派工未回報，已重新排入" and list each project's task titles. If
+"The previous dispatch never reported back; its answers were re-queued" and
+list each project's task titles. If
 `refilling_questions` is non-empty, say how many questions are being skipped
 this round because a context-refill session is already in flight for them
 (they will come back to `pending_questions` once that session finishes or

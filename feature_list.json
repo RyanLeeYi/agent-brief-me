@@ -2,52 +2,5 @@
  "project": "agent-brief-me",
  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
  "archive": "docs/archive/features.jsonl",
- "features": [
-  {
-   "id": "F32",
-   "name": "Dispatch session 與 serve 分家：服務重啟不再殺掉工作中的 session，exit code 查不到記 null",
-   "status": "passing",
-   "rationale": "2026-08-27 16:45 mission-control 對 agent-brief 的 manual stop 沿 process group 掃掉了 16:38 派出的 5 個 headless session（transcript 同秒腰斬、log 0 byte）；同批的 waiter 因 spawn_waiter 帶 DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP 而倖存，flags 就是生死差異。另外 pid_exit_code() 在 OpenProcess 失敗（process 死透查不到 handle）時回傳 0，『查不到』被當成『正常結束』，UI 標成 ok 掩蓋了整起事故。",
-   "acceptance": [
-    "spawn() 啟動的 headless session 與 spawn_watch 啟動的視窗 session 皆以獨立 process group 啟動：Windows 加 DETACHED_PROCESS|CREATE_NEW_PROCESS_GROUP（spawn_watch 既有 CREATE_NEW_CONSOLE 本身已隔離 console，補 CREATE_NEW_PROCESS_GROUP 或說明其等效性即可），POSIX 用 start_new_session=True，與 spawn_waiter 同一套。",
-    "pid_exit_code() 查不到真實 exit code 時（Windows OpenProcess 失敗、POSIX 分支的已死 pid）回傳可與『exit 0』區分的值，wait_batch 將該值記為 JSON null 寫入 finished 記錄的 exit_codes；waiter 迴圈照常收斂不卡死。",
-    "測試（stdlib unittest）至少涵蓋：spawn 的 creationflags/start_new_session 依平台正確設定、pid_exit_code 對已死且查不到 handle 的 pid 不回傳 0、wait_batch 對查不到 code 的 pid 寫入 null。既有測試全綠。",
-    "實測證據：headless 派出一個測試 session 後 kill 其父行程鏈（或以 psutil 驗證其 process group 獨立於 spawn 者），session 不受影響繼續執行至自然結束。",
-    "新增與修改的對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
-   ],
-   "touches": [
-    "scripts/dispatch.py",
-    "tests/test_dispatch_batch.py"
-   ],
-   "signed_off": true,
-   "evidence": [
-    "cmd: tests.test_dispatch_batch 12/12; CTRL_BREAK broadcast repro: old-style child dead, isolated child survives",
-    "note: acceptance-verifier 2026-08-27: R1-R4 pass; R5 P2 (private service name in new comment) FIXED in 4feae4c, F6 grep on F32 diff clean; P3 pre-existing debt deferred (tracked since F30)",
-    "commit 27714a8 + 4feae4c"
-   ]
-  },
-  {
-   "id": "F33",
-   "name": "Sessions 死因不明顯示 unknown，Web state 路徑也觸發 F24 requeue",
-   "status": "passing",
-   "rationale": "同一起 2026-08-27 事故的 UI 端修正：被殺的 session 因 exit_codes 記 0 而顯示 ok，使用者看不出工作被腰斬；且 F24 的 stale-batch requeue 只掛在 CLI load 路徑，Web UI 使用者的答案被吃掉後只能等 CLI /brief 或手動還原。",
-   "acceptance": [
-    "finished 記錄的 exit_codes 含 null 時，該列 outcome 顯示為 unknown（獨立 badge 樣式，不與 ok 同色），finished_counts 一併統計 unknown 數量並顯示。",
-    "GET /api/state 的處理路徑也執行 _requeue_stale_batches（與 CLI load 同一函式），冪等由既有 requeued line 保證；requeue 發生時回應照常成功。",
-    "測試（stdlib unittest，BRIEF_HOME 暫存目錄）至少涵蓋：exit_codes 帶 null 的 finished 列 outcome 為 unknown 且 finished_counts 統計正確、對 /api/state 的 GET 會為符合 F24 條件的 stale batch 補上 requeued line 並把答案 consumed 撥回 false、重複 GET 不重複 requeue。既有測試全綠。",
-    "新增與修改的對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
-   ],
-   "touches": [
-    "scripts/brief_me.py",
-    "scripts/brief_me.html",
-    "tests/test_brief_me_api.py"
-   ],
-   "signed_off": true,
-   "evidence": [
-    "cmd: tests.test_brief_me_api 40/40; py3.13 Playwright 17/17; live serve: null exit -> outcome unknown, GET /api/state requeues once, second GET no-op",
-    "note: acceptance-verifier 2026-08-27: R1-R3 pass; R4 fail only on pre-existing zh label debt (F30-tracked, not introduced here) - DEFER",
-    "commit 0061b9d"
-   ]
-  }
- ]
+ "features": []
 }

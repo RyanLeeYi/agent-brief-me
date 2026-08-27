@@ -44,6 +44,14 @@ from typing import Any
 
 MAX_LINE_BYTES = 8 * 1024
 
+# Windows CreateProcess flags shared by every background/detached child
+# (spawn, spawn_waiter) so a process-group-based stop of the dispatching
+# service (e.g. mission-control) does not sweep up sessions that must
+# outlive it (2026-08-27 incident: a manual stop killed 5 in-flight
+# headless sessions started moments earlier).
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+
 DELEGATION_SENTENCE = (
     "Before implementing, invoke Skill(skill=\"baton-dispatch\") and answer its five "
     "dispatch-brake questions (Outcome, Direct-work, Independence, Ownership, Closure) "
@@ -328,9 +336,19 @@ def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str, args: list[str]
     combined stdout/stderr redirected to log_path. Does not wait for it to
     finish. Raises OSError (e.g. FileNotFoundError) if the process cannot
     start.
+
+    Started in its own process group (same DETACHED_PROCESS |
+    CREATE_NEW_PROCESS_GROUP on Windows / start_new_session on POSIX as
+    spawn_waiter below), so a process-group-based stop/restart of the
+    dispatching service does not kill the session it just started.
     """
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     log_fh = open(log_path, "wb")
+    isolation: dict[str, Any] = {}
+    if sys.platform == "win32":
+        isolation["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    else:
+        isolation["start_new_session"] = True
     try:
         proc = subprocess.Popen(
             [claude_cmd, "-p", *args],
@@ -339,6 +357,7 @@ def spawn(claude_cmd: str, cwd: str, prompt: str, log_path: str, args: list[str]
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             env=clean_env(),
+            **isolation,
         )
     finally:
         log_fh.close()
@@ -407,6 +426,14 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subp
     user can watch it work. Same allowlist as headless so behaviour matches;
     anything outside it still prompts in the window. No log file - the window
     is the log.
+
+    Isolation: CREATE_NEW_CONSOLE alone already gives this process its own
+    console session, which Windows treats as a separate console process
+    group from the parent's - the same isolation CREATE_NEW_PROCESS_GROUP
+    would add explicitly, and which CREATE_NEW_PROCESS_GROUP is documented
+    to be ignored under anyway when combined with CREATE_NEW_CONSOLE. No
+    extra flag needed here; see spawn()/spawn_waiter() for the headless case
+    where nothing already provides that isolation.
     """
     # The multi-line JSONL prompt is written to a file and referenced by a
     # one-line positional prompt: a long quoted argv with newlines/quotes was
@@ -429,18 +456,28 @@ def dispatches_path(brief_home: str) -> str:
     return os.path.join(brief_home, "dispatches.jsonl")
 
 
+# Sentinel for "the process is gone but we could not learn its real exit
+# code" (Windows: OpenProcess failed, e.g. the process object no longer
+# exists; POSIX: os.kill can tell alive/dead but never the code, since these
+# sessions are not our children once the waiter is detached, so no waitpid).
+# Must be distinguishable from any real exit code so a lookup failure is
+# never mistaken for a clean exit(0) - see the 2026-08-27 incident notes on
+# DETACHED_PROCESS above. Real Windows exit codes are non-negative DWORDs,
+# so -1 can never collide with one.
+EXIT_CODE_UNKNOWN = -1
+
+
 def pid_exit_code(pid: int):
-    """None while the process is alive; its exit code once gone. The sessions
-    are not our children once the waiter is detached, so no waitpid.
-    ponytail: POSIX branch reports 0 for any finished pid - os.kill can
-    tell alive/dead but not the code; use Windows branch for real codes."""
+    """None while the process is alive; its exit code once gone, or
+    EXIT_CODE_UNKNOWN when it is gone but the real code could not be
+    determined."""
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
         k32 = ctypes.windll.kernel32
         handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if not handle:
-            return 0
+            return EXIT_CODE_UNKNOWN
         code = wintypes.DWORD()
         ok = k32.GetExitCodeProcess(handle, ctypes.byref(code))
         k32.CloseHandle(handle)
@@ -451,7 +488,7 @@ def pid_exit_code(pid: int):
         os.kill(pid, 0)
         return None
     except ProcessLookupError:
-        return 0
+        return EXIT_CODE_UNKNOWN
     except PermissionError:
         return None
 
@@ -462,7 +499,7 @@ def spawn_waiter(brief_home: str, batch_id: str, pids: list[int]) -> None:
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                               "stderr": subprocess.DEVNULL, "cwd": brief_home}
     if sys.platform == "win32":
-        kwargs["creationflags"] = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
     subprocess.Popen(cmd, **kwargs)
@@ -626,9 +663,12 @@ def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
                     codes[pid] = code
         if len(codes) < len(pids):
             time.sleep(2)
+    # EXIT_CODE_UNKNOWN is this module's internal sentinel (never a real exit
+    # code); record it as JSON null rather than a made-up number.
+    exit_codes = [None if codes[p] == EXIT_CODE_UNKNOWN else codes[p] for p in pids]
     atomic_append_line(dispatches_path(brief_home), {
         "type": "finished", "batch_id": batch_id, "finished_at": _now(),
-        "exit_codes": [codes[p] for p in pids],
+        "exit_codes": exit_codes,
     })
     projects = []
     for line in open(dispatches_path(brief_home), encoding="utf-8"):

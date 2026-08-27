@@ -1,7 +1,10 @@
 """F13: dispatch.py records started/finished lines and notifies once per batch.
 Run: python tests/test_dispatch_batch.py  (stdlib only; fake claude = sleep 1)
 F23-A: tasks_for's {feature, kind, title} normalization - run via
-`python -m unittest tests.test_dispatch_batch`."""
+`python -m unittest tests.test_dispatch_batch`.
+F32: spawn() isolates its child into its own process group (so a
+service restart doesn't kill it), and pid_exit_code()/wait_batch() report an
+undeterminable exit code as EXIT_CODE_UNKNOWN / JSON null rather than 0."""
 import json
 import os
 import subprocess
@@ -9,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DISPATCH = os.path.join(ROOT, "scripts", "dispatch.py")
@@ -181,6 +185,73 @@ class DelegateDefaultTests(unittest.TestCase):
         self.assertIn(self.dispatch.DELEGATION_SENTENCE, prompt)
         args = self.dispatch.claude_args(settings, "/tmp/brief")
         self.assertNotIn("--disallowedTools", args)
+
+
+class SpawnProcessGroupTests(unittest.TestCase):
+    """F32: spawn() starts its child in its own process group (Windows:
+    DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP; POSIX: start_new_session),
+    the same isolation spawn_waiter already uses, so a process-group-based
+    stop of the dispatching service doesn't kill the session it just
+    started."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import dispatch  # noqa: E402
+
+        self.dispatch = dispatch
+
+    def test_spawn_isolates_into_its_own_process_group(self):
+        with mock.patch.object(self.dispatch.subprocess, "Popen") as popen:
+            popen.return_value.stdin = mock.Mock()
+            with tempfile.TemporaryDirectory() as tmp:
+                self.dispatch.spawn("claude", tmp, "prompt",
+                                     os.path.join(tmp, "logs", "x.log"), [])
+            kwargs = popen.call_args.kwargs
+        if sys.platform == "win32":
+            self.assertEqual(
+                kwargs.get("creationflags"),
+                self.dispatch.DETACHED_PROCESS | self.dispatch.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            self.assertIs(kwargs.get("start_new_session"), True)
+
+
+class PidExitCodeUnknownTests(unittest.TestCase):
+    """F32: a pid whose real exit code cannot be looked up (Windows:
+    OpenProcess fails; POSIX: os.kill reports ProcessLookupError) must not be
+    reported as exit code 0."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import dispatch  # noqa: E402
+
+        self.dispatch = dispatch
+
+    def test_unreachable_pid_is_not_reported_as_zero(self):
+        # No OS hands out this PID; OpenProcess/os.kill both report
+        # "no such process" for it, which is exactly the "gone but
+        # undeterminable" case this sentinel exists for.
+        code = self.dispatch.pid_exit_code(999999999)
+        self.assertIsNotNone(code)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(code, self.dispatch.EXIT_CODE_UNKNOWN)
+
+
+class WaitBatchUnknownExitTests(unittest.TestCase):
+    """F32: wait_batch() writes EXIT_CODE_UNKNOWN as JSON null in the
+    finished record's exit_codes, distinguishable from a real exit(0)."""
+
+    def test_undeterminable_exit_code_recorded_as_null(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import dispatch  # noqa: E402
+
+        home = tempfile.mkdtemp()
+        with open(os.path.join(home, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"projects": []}, f)
+        dispatch.wait_batch(home, "batch-unknown", [999999999])
+        recs = [json.loads(l) for l in open(os.path.join(home, "dispatches.jsonl"), encoding="utf-8")]
+        finished = [r for r in recs if r["type"] == "finished"][0]
+        self.assertEqual(finished["exit_codes"], [None])
 
 
 if __name__ == "__main__":

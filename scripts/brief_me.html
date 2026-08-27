@@ -482,13 +482,6 @@
         <div class="question-card" id="settings-editable-card">
           <h3 class="card-title">Dispatch settings</h3>
           <div class="settings-field">
-            <label class="settings-label">Show a terminal window</label>
-            <label class="dispatch-row">
-              <input type="checkbox" id="settings-watch">
-              <span>--watch (opens a visible window per project instead of headless)</span>
-            </label>
-          </div>
-          <div class="settings-field">
             <label class="settings-label">Model for worker sessions</label>
             <input type="text" class="other-input" id="settings-model" placeholder="(Claude Code default)">
           </div>
@@ -598,7 +591,6 @@
 
   var settingsEntryEl = document.getElementById('settings-entry');
   var settingsViewEl = document.getElementById('settings-view');
-  var settingsWatchEl = document.getElementById('settings-watch');
   var settingsModelEl = document.getElementById('settings-model');
   var settingsContextModelEl = document.getElementById('settings-context-model');
   var settingsLanguageEl = document.getElementById('settings-language');
@@ -1593,7 +1585,6 @@
     var config = settingsState.config || {};
     var d = config.dispatch || {};
 
-    settingsWatchEl.checked = !!d.watch;
     settingsModelEl.value = d.model || '';
     settingsContextModelEl.value = d.context_model || '';
     settingsDelegateEl.checked = !!d.delegate;
@@ -1646,7 +1637,6 @@
 
   function handleSettingsSave() {
     var body = { dispatch: {
-      watch: settingsWatchEl.checked,
       model: settingsModelEl.value.trim() || null,
       context_model: settingsContextModelEl.value.trim() || null,
       delegate: settingsDelegateEl.checked,

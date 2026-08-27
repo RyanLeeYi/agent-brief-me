@@ -127,7 +127,9 @@ The sidebar's **Sessions** entry shows what happened after you dispatched:
 ### Settings view
 
 The sidebar's **Settings** entry shows `config.json`'s current value and lets you edit a small whitelist of
-`dispatch` fields in place: `watch`, `model`, `context_model`, `context_language`, `plain_language`, and `delegate`.
+`dispatch` fields in place: `model`, `context_model`, `context_language`, `plain_language`, and `delegate`
+(`watch` is not offered here - web dispatches always pass the sidebar checkbox's explicit `--watch`/`--no-watch`,
+so the config default never applies to them).
 Reply language is a dropdown (not specified / Traditional Chinese / Simplified Chinese / English / Japanese) plus a
 "keep technical terms in English" checkbox, which together compose into the single string `context_language` holds
 (e.g. `Traditional Chinese (keep technical terms in English)`); a value the dropdown cannot parse back shows as

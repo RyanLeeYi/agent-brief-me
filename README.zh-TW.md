@@ -125,8 +125,9 @@ Report 收合成一列（專案、`F12 passing` 這類 feature 晶片、摘要�
 
 ### Settings 檢視
 
-側欄的 **Settings** 顯示 `config.json` 現值，並讓你就地編輯一小組白名單 `dispatch` 欄位：`watch`、`model`、
-`context_model`、`context_language`、`plain_language`、`delegate`。回覆語言是下拉選單（不指定／繁體中文／簡體
+側欄的 **Settings** 顯示 `config.json` 現值，並讓你就地編輯一小組白名單 `dispatch` 欄位：`model`、
+`context_model`、`context_language`、`plain_language`、`delegate`（不提供 `watch`——網頁派工永遠明帶側欄
+checkbox 的 `--watch`／`--no-watch`，config 預設值對它從不生效）。回覆語言是下拉選單（不指定／繁體中文／簡體
 中文／English／日本語）加一個「技術術語保留英文」checkbox，兩者組合成 `context_language` 存的單一字串（例如
 `Traditional Chinese (keep technical terms in English)`）；下拉選單解不回的值會顯示為「Custom」，只要不刻意改動
 語言選擇就保留原值不覆寫。儲存會就地重寫 `config.json` - 下一次派工（含補脈絡 refill）立刻讀到新值，不需要重啟

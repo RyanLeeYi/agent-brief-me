@@ -6,7 +6,7 @@
   {
    "id": "F31",
    "name": "Sessions 列收合，展開顯示派出的問題與答案",
-   "status": "failing",
+   "status": "passing",
    "rationale": "Sessions 檢視目前把 task chips 與按鈕全攤在列上，看不到該 session 究竟帶著哪些問題與使用者給的答案；要回想當時裁決得回 inbox 翻。改成預設收合、點開才顯示問題原文與答案，資訊密度與可追溯性都變好。task 物件只存 (title, kind, feature) 沒存 question_id，配對沿用 _requeue_candidates 既有的 (project, title) 對 inbox question 的方式，不改 dispatches.jsonl schema。",
    "acceptance": [
     "Sessions 檢視的 finished 列預設收合，只顯示 outcome、project、任務數（或單一任務時該任務標題）、took、ended；點列展開、再點一次收合。running 卡片同樣可展開收合。",
@@ -22,7 +22,12 @@
     "tests/test_brief_me_api.py",
     "tests/test_brief_me_html.py"
    ],
-   "signed_off": true
+   "signed_off": true,
+   "evidence": [
+    "cmd: py -3.13 -m unittest discover tests -> 85 passed; py -3.13 tests/test_brief_me_html.py -> 17 Playwright scenes OK",
+    "note: acceptance-verifier 2026-08-27: 6/6 pass incl. real-server e2e (matched/unmatched QA render, toggle isolation from action buttons, mobile toggle 82px)",
+    "commit 41624c5"
+   ]
   }
  ]
 }

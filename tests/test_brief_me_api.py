@@ -1147,7 +1147,7 @@ class BriefMeOrcaAPITestCase(BriefMeAPITestCase):
     def test_orca_state_running_with_version_and_repos(self):
         self._write_config(projects=[{"name": "demo", "path": self.home}])
         self._set_orca_config({
-            "status": {"ok": True, "result": {"app": {"running": True, "version": "1.4.2"}}},
+            "status": {"ok": True, "result": {"app": {"running": True}, "runtime": {"appVersion": "1.4.2"}}},
             "repo_list": {"ok": True, "result": {"repos": [
                 {"id": "repo-1", "displayName": "Repo One", "path": self.home},
             ]}},

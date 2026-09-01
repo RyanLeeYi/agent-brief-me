@@ -500,14 +500,17 @@ _OPENED_WINDOW_RE = re.compile(r"^(.+): opened in new window$")
 
 
 def _orca_version(status_result):
-    """Best-effort version string from a successful `orca status --json`
-    result: `result.app.version`, falling back to a top-level
-    `result.version`. Neither location is documented anywhere else in this
-    repo, so both plausible shapes are checked; anything else (missing,
-    non-string) is None rather than raised on."""
+    """Version string from a successful `orca status --json` result. The real
+    CLI (verified against Orca 1.4.193) reports it as
+    `result.runtime.appVersion`; `result.app.version` and a top-level
+    `result.version` are accepted as fallbacks. Missing or non-string
+    values yield None rather than an error."""
     result = status_result.get("result")
     if not isinstance(result, dict):
         return None
+    runtime = result.get("runtime")
+    if isinstance(runtime, dict) and isinstance(runtime.get("appVersion"), str):
+        return runtime["appVersion"]
     app = result.get("app")
     if isinstance(app, dict) and isinstance(app.get("version"), str):
         return app["version"]

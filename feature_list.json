@@ -29,26 +29,6 @@
     "docs/evidence/F35.md"
    ],
    "signed_off": true
-  },
-  {
-   "id": "F37",
-   "name": "Refresh 按鈕有進行中回饋，完成後顯示本次新增的 question／report 數",
-   "status": "failing",
-   "rationale": "Refresh 會先跑 collector（1–3 秒，含 Orca 探測更久）再重載，但成功時畫面完全沒動靜，Ryan 2026-09-01 反映「不知道有沒有跑」。規則：>300ms 的操作要有 loading 指示；成功回饋要比錯誤回饋消失得快。取捨：不顯示「上次更新時間」（Ryan 不要）；新增數用前端比對重載前後的 id 集合算（同時涵蓋 scanner 補的 question 與 agent 投的 report），不解析 collector stdout。",
-   "acceptance": [
-    "按下 #refresh-btn 到重載完成（成功或失敗）之間：按鈕 disabled（沿用 .btn:disabled 的 opacity 0.5、cursor default）、title 改為 \"Refreshing...\"、圖示以 CSS animation 旋轉（1 圈 1s linear infinite，class refreshing）；完成後三者還原。disabled 期間再按不觸發第二次 /api/collect。",
-    "重載成功後前端比對重載前後的 state：新的 pending question id 數 N（pending_questions 內、之前不存在的 id）與新的 unread report id 數 M；toast 文字為 \"Refreshed - N new questions, M new reports\"（N、M 為 0 也照印），此成功 toast 3 秒後消失（既有 toast 6 秒的行為對 warning／error 不變，toast() 增加可選的 duration 參數）。",
-    "#header-counts 在既有 \"<n> questions · <m> unread reports\" 之後，當 N 或 M 任一大於 0 時附加 \" · +N questions, +M reports since refresh\"（為 0 的那一項省略，例如 \" · +2 questions since refresh\"），下一次 Refresh 或整頁重新載入時清除；All projects 與單一專案視圖都顯示，數字不依專案過濾（表示這次 refresh 全部新增）。",
-    "失敗（/api/collect 或 /api/state 拋錯）維持既有紅色 toast \"Refresh failed: ...\"，且按鈕依第 1 條還原。",
-    "tests/test_brief_me_html.py Playwright 場景至少涵蓋：按下後按鈕 disabled 且帶 refreshing class、完成後還原；stub 在第二次 /api/state 多回 2 個 pending question 與 1 個 unread report 時 toast 為 \"Refreshed - 2 new questions, 1 new reports\" 且 header 附加 \" · +2 questions, +1 reports since refresh\"；無新增時 toast 為 \"Refreshed - 0 new questions, 0 new reports\" 且 header 無附加文字；collect 失敗時按鈕還原且出現 error toast。既有測試全綠。",
-    "本次 diff 內對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
-   ],
-   "touches": [
-    "scripts/brief_me.html",
-    "tests/test_brief_me_html.py",
-    "tests/_stub_api.py"
-   ],
-   "signed_off": true
   }
  ]
 }

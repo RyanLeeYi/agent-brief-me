@@ -109,6 +109,8 @@
   .btn-secondary{ background:var(--bg-card); }
   .btn-link{ min-height:24px; padding:0 4px; color:var(--accent); font-weight:500; cursor:pointer; }
   .btn-icon{ min-height:40px; width:40px; padding:0; display:flex; align-items:center; justify-content:center; }
+  @keyframes refresh-spin{ to{ transform:rotate(360deg); } }
+  #refresh-btn.refreshing svg{ animation:refresh-spin 1s linear infinite; }
 
   #sidebar-toggle{ flex:0 0 auto; }
   #app.sidebar-collapsed #sidebar{ display:none; }
@@ -688,7 +690,8 @@
     selections: {},            // question id -> per-question UI record ("qui")
     reportsReadLocally: {},    // report id -> true, once /api/read has been posted this page life
     collapsed: { questions: false, reports: false },
-    dismissedFilter: { project: '__all__', query: '' }
+    dismissedFilter: { project: '__all__', query: '' },
+    sinceRefresh: null         // F37: {q, r} counts of items added by the last Refresh click
   };
 
   // F30: config.json's current value, loaded fresh every time Settings is opened.
@@ -763,7 +766,7 @@
     var idx = String(s == null ? '' : s).indexOf('\n');
     return idx === -1 ? s : s.slice(0, idx);
   }
-  function toast(message, type) {
+  function toast(message, type, duration) {
     var el = document.createElement('div');
     el.className = 'toast' + (type ? ' toast-' + type : '');
     el.textContent = message;
@@ -772,7 +775,7 @@
     setTimeout(function () {
       el.classList.remove('show');
       setTimeout(function () { el.remove(); }, 200);
-    }, 6000);
+    }, duration || 6000);
   }
   function copyText(text, btn) {
     function done() {
@@ -1043,7 +1046,14 @@
   function updateHeader() {
     currentProjectNameEl.textContent = state.currentProject === '__all__' ? 'All projects' : state.currentProject;
     var stats = projectStats(state.currentProject);
-    headerCountsEl.textContent = stats.pending + ' questions · ' + stats.unread + ' unread reports';
+    var text = stats.pending + ' questions · ' + stats.unread + ' unread reports';
+    if (state.sinceRefresh) {
+      var extra = [];
+      if (state.sinceRefresh.q > 0) extra.push('+' + state.sinceRefresh.q + ' questions');
+      if (state.sinceRefresh.r > 0) extra.push('+' + state.sinceRefresh.r + ' reports');
+      if (extra.length) text += ' · ' + extra.join(', ') + ' since refresh';
+    }
+    headerCountsEl.textContent = text;
   }
 
   function elapsedString(sec) {
@@ -2009,12 +2019,41 @@
   watchCheckboxEl.addEventListener('change', updateAnswersPanel);
   saveBtnEl.addEventListener('click', handleSaveClick);
 
+  // F37: id set flattened across all projects, used to diff pending
+  // questions / unread reports before vs. after a Refresh.
+  function idSet(byProject) {
+    var ids = {};
+    Object.keys(byProject).forEach(function (p) {
+      byProject[p].forEach(function (item) { ids[item.id] = true; });
+    });
+    return ids;
+  }
+  function countNew(prevIds, newIds) {
+    return Object.keys(newIds).filter(function (id) { return !prevIds[id]; }).length;
+  }
+
   refreshBtnEl.addEventListener('click', function () {
+    if (refreshBtnEl.disabled) return;
+    var prevQuestionIds = idSet(state.data.pending_questions);
+    var prevReportIds = idSet(state.data.unread_reports);
+    refreshBtnEl.disabled = true;
+    refreshBtnEl.classList.add('refreshing');
+    refreshBtnEl.title = 'Refreshing...';
     apiPost('/api/collect', {}).then(function (res) {
       if (res.collector_warning) toast(res.collector_warning, 'warning');
       return reloadState();
+    }).then(function () {
+      var addedQ = countNew(prevQuestionIds, idSet(state.data.pending_questions));
+      var addedR = countNew(prevReportIds, idSet(state.data.unread_reports));
+      state.sinceRefresh = { q: addedQ, r: addedR };
+      updateHeader();
+      toast('Refreshed - ' + addedQ + ' new questions, ' + addedR + ' new reports', 'info', 3000);
     }).catch(function (err) {
       toast('Refresh failed: ' + err.message, 'error');
+    }).finally(function () {
+      refreshBtnEl.disabled = false;
+      refreshBtnEl.classList.remove('refreshing');
+      refreshBtnEl.title = 'Refresh';
     });
   });
 

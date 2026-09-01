@@ -716,7 +716,10 @@ def run_scenes(page, base_url, brief_home, fx):
     page.locator(f'.orca-open-as[data-project="{ancestor_project_2}"]').select_option("bind:repo-root")
     _stub_api.last_config_patch = None
     page.locator("#settings-save-btn").click()
-    expect(page.locator(".toast")).to_contain_text("Settings saved.")
+    # F37: scoped by text, not just ".toast" - earlier #refresh-btn clicks in
+    # this file now each leave their own "Refreshed - ..." toast around for a
+    # few seconds, so an unscoped ".toast" can resolve to more than one.
+    expect(page.locator(".toast", has_text="Settings saved.")).to_contain_text("Settings saved.")
 
     sent_projects = {p["name"]: p["orca"] for p in _stub_api.last_config_patch["projects"]}
     assert set(sent_projects) == {ancestor_project, ancestor_project_2}, sent_projects
@@ -737,6 +740,59 @@ def run_scenes(page, base_url, brief_home, fx):
     print("scene: F36 selecting console hides .orca-projects - OK")
 
     os.remove(orca_json_path)
+
+    # ---- F37: Refresh button in-progress feedback + new-since-refresh counts ----
+    page.locator('.side-item[data-project="__all__"]').click()
+    expect(page.locator("#inbox-view")).to_be_visible()
+    refresh_btn = page.locator("#refresh-btn")
+
+    # Slow down /api/collect server-side so the disabled/spinning/
+    # "Refreshing..." state is observable before the round-trip completes
+    # and reverts it. (Playwright's own page.route() can't do this delay:
+    # continuing a route from a background thread isn't supported by the
+    # sync API - "Cannot switch to a different thread" - and blocking the
+    # route callback's own thread with time.sleep() stalls the single
+    # driver loop every other Playwright call shares, including click().)
+    collect_delay_path = os.path.join(brief_home, "collect_delay.json")
+    write_json(collect_delay_path, {"seconds": 1.0})
+    refresh_btn.click()
+    expect(refresh_btn).to_be_disabled()
+    expect(refresh_btn).to_have_class("btn btn-icon refreshing")
+    expect(refresh_btn).to_have_attribute("title", "Refreshing...")
+    expect(refresh_btn).not_to_be_disabled()  # waits out the artificial delay above
+    expect(refresh_btn).to_have_class("btn btn-icon")
+    expect(refresh_btn).to_have_attribute("title", "Refresh")
+    os.remove(collect_delay_path)
+    print("scene: F37 Refresh button shows in-progress state (disabled, spinning, title) and reverts - OK")
+
+    # a second /api/state (triggered by the next Refresh click) returns 2 more
+    # pending questions and 1 more unread report than the page currently has.
+    new_q1 = make_question(PROJECT, "New since refresh Q1", ["A", "B"])
+    new_q2 = make_question(PROJECT, "New since refresh Q2", ["A", "B"])
+    new_r1 = make_report(PROJECT, "New since refresh report.")
+    for record in (new_q1, new_q2, new_r1):
+        append_line(os.path.join(brief_home, "inbox.jsonl"), record)
+    refresh_btn.click()
+    expect(refresh_btn).not_to_be_disabled()
+    expect(page.locator(".toast").last).to_have_text("Refreshed - 2 new questions, 1 new reports")
+    expect(page.locator("#header-counts")).to_contain_text("+2 questions, +1 reports since refresh")
+    print("scene: F37 toast + header show counts of items added by this refresh - OK")
+
+    refresh_btn.click()
+    expect(refresh_btn).not_to_be_disabled()
+    expect(page.locator(".toast").last).to_have_text("Refreshed - 0 new questions, 0 new reports")
+    expect(page.locator("#header-counts")).not_to_contain_text("since refresh")
+    print("scene: F37 no new items since the last refresh -> zero counts, no header suffix - OK")
+
+    collect_fail_path = os.path.join(brief_home, "collect_fail.json")
+    write_json(collect_fail_path, {"error": "boom"})
+    refresh_btn.click()
+    expect(refresh_btn).not_to_be_disabled()
+    expect(refresh_btn).to_have_class("btn btn-icon")
+    expect(refresh_btn).to_have_attribute("title", "Refresh")
+    expect(page.locator(".toast").last).to_have_text("Refresh failed: boom")
+    os.remove(collect_fail_path)
+    print("scene: F37 /api/collect failure reverts the button and shows an error toast - OK")
 
 
 if __name__ == "__main__":

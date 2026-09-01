@@ -21,6 +21,7 @@ cannot stage.
 import json
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -199,6 +200,34 @@ def _running(brief_home):
         return json.load(f)
 
 
+def _collect_delay(brief_home):
+    """F37 test seam: when BRIEF_HOME/collect_delay.json exists with
+    {"seconds": N}, POST /api/collect sleeps N seconds (server-side, in this
+    request's own handler thread - ThreadingHTTPServer gives every request
+    its own thread) before responding, so a UI test can observe the Refresh
+    button's in-progress state. Playwright's page.route() can't provide this
+    delay itself: continuing a route from a background thread isn't
+    supported by the sync API, and blocking the route callback's own thread
+    stalls every other pending Playwright call too, including click()."""
+    path = os.path.join(brief_home, "collect_delay.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f).get("seconds")
+
+
+def _collect_fail(brief_home):
+    """F37 test seam: when BRIEF_HOME/collect_fail.json exists, POST
+    /api/collect returns its contents as an error response ({"error": ...},
+    optionally "status") instead of the default success (the real server's
+    collector failure paths aren't reproducible from a UI test)."""
+    path = os.path.join(brief_home, "collect_fail.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def _sessions(brief_home):
     """F14 test seam: {running, finished, finished_hidden} read verbatim
     from BRIEF_HOME/sessions.json when present (the real server derives it
@@ -267,6 +296,13 @@ class Handler(BaseHTTPRequestHandler):
         answers_path = os.path.join(brief_home, "answers.jsonl")
 
         if self.path == "/api/collect":
+            delay = _collect_delay(brief_home)
+            if delay:
+                time.sleep(delay)
+            fail = _collect_fail(brief_home)
+            if fail is not None:
+                self._send_json(fail.get("status", 500), {"ok": False, "error": fail.get("error", "collect failed")})
+                return
             self._send_json(200, {"ok": True, "collector_warning": None})
             return
 

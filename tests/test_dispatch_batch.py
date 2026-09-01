@@ -7,6 +7,7 @@ service restart doesn't kill it), and pid_exit_code()/wait_batch() report an
 undeterminable exit code as EXIT_CODE_UNKNOWN / JSON null rather than 0."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -252,6 +253,329 @@ class WaitBatchUnknownExitTests(unittest.TestCase):
         recs = [json.loads(l) for l in open(os.path.join(home, "dispatches.jsonl"), encoding="utf-8")]
         finished = [r for r in recs if r["type"] == "finished"][0]
         self.assertEqual(finished["exit_codes"], [None])
+
+
+def _write_immediate_exit_claude(directory):
+    """A stand-in for the real `claude` binary for --watch mode: exits
+    immediately, ignoring all args/stdin (same shape as
+    test_dispatch_trust.py's own helper, duplicated here rather than
+    imported - each test file in this repo is runnable standalone)."""
+    if sys.platform == "win32":
+        wrapper = os.path.join(directory, "claude.cmd")
+        with open(wrapper, "w") as f:
+            f.write(f'@"{sys.executable}" -c "pass"\n')
+        return wrapper
+    wrapper = os.path.join(directory, "claude")
+    with open(wrapper, "w") as f:
+        f.write(f'#!/bin/sh\nexec "{sys.executable}" -c "pass"\n')
+    os.chmod(wrapper, 0o755)
+    return wrapper
+
+
+# F34: a real subprocess stand-in for the `orca` CLI, reached only via PATH
+# (never a python-level mock of run_orca()) so these tests also prove
+# dispatch.py's shutil.which()-based resolution actually finds a fake
+# ".cmd"/".bat" shim the way a real npm-style Orca install would ship one -
+# a bare "orca" argv[0] does NOT get auto-resolved to ".cmd"/".bat" by
+# Windows CreateProcess (only ".exe" is auto-appended for an extension-less
+# name), so this also guards against dispatch.py regressing back to that.
+#
+# Every invocation's argv is appended (as one JSON array) to FAKE_ORCA_LOG.
+# Canned responses come from the JSON object at FAKE_ORCA_CONFIG (missing/
+# absent keys fall back to a generic success shape); `terminal create`
+# additionally supports a `terminal_create_responses` list, indexed by how
+# many `terminal create` calls have been logged so far (including this
+# one), so a test can script "fails once, then succeeds" for the
+# selector_not_found -> `repo add` -> retry path.
+FAKE_ORCA_PY = '''
+import json, os, sys
+
+argv = sys.argv[1:]
+log_path = os.environ["FAKE_ORCA_LOG"]
+with open(log_path, "a", encoding="utf-8") as f:
+    f.write(json.dumps(argv) + chr(10))
+
+config = {}
+config_path = os.environ.get("FAKE_ORCA_CONFIG")
+if config_path and os.path.exists(config_path):
+    with open(config_path, encoding="utf-8") as f:
+        config = json.load(f)
+
+
+def respond(obj):
+    print(json.dumps(obj))
+    sys.exit(0)
+
+
+if argv[:1] == ["status"]:
+    respond(config.get("status", {"ok": True, "result": {
+        "app": {"running": True}, "runtime": {"state": "ready"}}}))
+if argv[:2] == ["terminal", "create"]:
+    with open(log_path, encoding="utf-8") as f:
+        prior = [json.loads(l) for l in f if l.strip()]
+    n = sum(1 for c in prior if c[:2] == ["terminal", "create"])
+    responses = config.get("terminal_create_responses")
+    if responses:
+        respond(responses[min(n - 1, len(responses) - 1)])
+    respond(config.get("terminal_create", {"ok": True, "result": {
+        "terminal": {"handle": "term_fake1", "tabId": 1}}}))
+if argv[:2] == ["repo", "add"]:
+    respond(config.get("repo_add", {"ok": True, "result": {}}))
+if argv[:2] == ["repo", "list"]:
+    respond(config.get("repo_list", {"ok": True, "result": {"repos": []}}))
+if argv[:2] == ["terminal", "wait"]:
+    respond(config.get("terminal_wait", {"ok": True, "result": {"wait": {
+        "satisfied": True, "status": "exited", "exitCode": 0}}}))
+respond({"ok": False, "error": {"code": "unknown_command"}})
+'''
+
+
+def _write_fake_orca(directory):
+    script_path = os.path.join(directory, "fake_orca.py")
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(FAKE_ORCA_PY)
+    if os.name == "nt":
+        wrapper_path = os.path.join(directory, "orca.cmd")
+        with open(wrapper_path, "w", encoding="utf-8") as f:
+            f.write(f'@echo off\r\n"{sys.executable}" "{script_path}" %*\r\n')
+        return wrapper_path
+    wrapper_path = os.path.join(directory, "orca")
+    with open(wrapper_path, "w", encoding="utf-8") as f:
+        f.write(f'#!/bin/sh\nexec "{sys.executable}" "{script_path}" "$@"\n')
+    os.chmod(wrapper_path, 0o755)
+    return wrapper_path
+
+
+class OrcaWindowTests(unittest.TestCase):
+    """F34: dispatch.window: "orca" opens --watch sessions in an Orca
+    terminal tab (`orca terminal create`) instead of a native console
+    window; headless (-p) dispatch never touches orca either way."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import dispatch  # noqa: E402
+        self.dispatch = dispatch
+
+        self.home = tempfile.mkdtemp(prefix="brief-home-")
+        self.orca_dir = tempfile.mkdtemp(prefix="fake-orca-")
+        self.project_dir = tempfile.mkdtemp(prefix="brief-project-")
+        self.log_path = os.path.join(self.orca_dir, "orca-calls.jsonl")
+        self.config_path = os.path.join(self.orca_dir, "orca-config.json")
+        self.claude_path = _write_immediate_exit_claude(self.orca_dir)
+        _write_fake_orca(self.orca_dir)
+
+        with open(os.path.join(self.home, "claude.json"), "w", encoding="utf-8") as f:
+            json.dump({"projects": {}}, f)
+
+        self._orig_environ = dict(os.environ)
+        os.environ["BRIEF_HOME"] = self.home
+        os.environ["BRIEF_CLAUDE_CMD"] = self.claude_path
+        os.environ["BRIEF_CLAUDE_JSON"] = os.path.join(self.home, "claude.json")
+        os.environ["FAKE_ORCA_LOG"] = self.log_path
+        os.environ["FAKE_ORCA_CONFIG"] = self.config_path
+        os.environ["PATH"] = self.orca_dir + os.pathsep + os.environ.get("PATH", "")
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._orig_environ)
+        for d in (self.home, self.orca_dir, self.project_dir):
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _write_config(self, projects, window="orca"):
+        dispatch_cfg = {} if window is None else {"window": window}
+        with open(os.path.join(self.home, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"projects": projects, "collector": None, "notify": None,
+                       "dispatch": dispatch_cfg}, f)
+
+    def _set_orca_config(self, cfg):
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+
+    def _log_entries(self):
+        if not os.path.exists(self.log_path):
+            return []
+        with open(self.log_path, encoding="utf-8") as f:
+            return [json.loads(l) for l in f if l.strip()]
+
+    def _started_records(self):
+        path = os.path.join(self.home, "dispatches.jsonl")
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as f:
+            return [r for r in map(json.loads, f) if r.get("type") == "started"]
+
+    # -- AC1: console (default/missing key) is unaffected -----------------
+    def test_window_missing_key_no_orca_call_and_pid_present(self):
+        with open(os.path.join(self.home, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({"projects": [{"name": "a", "path": self.project_dir}],
+                       "collector": None, "notify": None}, f)
+
+        rc = self.dispatch.main(["--watch", "a"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._log_entries(), [])
+        started = self._started_records()
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0]["pid"])
+        self.assertNotIn("terminal", started[0])
+
+    # -- AC2/AC4: headless never touches orca, even with window: "orca" ---
+    def test_headless_with_window_orca_never_calls_orca(self):
+        self._write_config([{"name": "a", "path": self.project_dir}])
+
+        rc = self.dispatch.main(["--no-watch", "a"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._log_entries(), [])
+        started = self._started_records()
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0]["pid"])
+        self.assertNotIn("terminal", started[0])
+
+    # -- AC2: repo-mode terminal create argv -------------------------------
+    def test_orca_repo_mode_terminal_create_argv(self):
+        self._write_config([{"name": "a", "path": self.project_dir}])
+
+        rc = self.dispatch.main(["--watch", "a"])
+
+        self.assertEqual(rc, 0)
+        creates = [e for e in self._log_entries() if e[:2] == ["terminal", "create"]]
+        self.assertEqual(len(creates), 1)
+        argv = creates[0]
+        self.assertEqual(argv[argv.index("--worktree") + 1], f"path:{self.project_dir}")
+        self.assertEqual(argv[argv.index("--title") + 1], "a")
+        command = argv[argv.index("--command") + 1]
+        prompt_path = os.path.join(self.home, "prompts", f"{os.path.basename(self.project_dir)}.md")
+        self.assertIn(f"Read {prompt_path} and follow it as your task brief.", command)
+        self.assertIn(os.path.basename(self.claude_path), command)
+
+        started = self._started_records()
+        self.assertEqual(len(started), 1)
+        self.assertIsNone(started[0]["pid"])
+        self.assertEqual(started[0]["terminal"], "term_fake1")
+
+    # -- AC3: selector_not_found -> repo add -> retry ----------------------
+    def test_selector_not_found_triggers_repo_add_then_retry(self):
+        self._write_config([{"name": "a", "path": self.project_dir}])
+        self._set_orca_config({"terminal_create_responses": [
+            {"ok": False, "error": {"code": "selector_not_found"}},
+            {"ok": True, "result": {"terminal": {"handle": "term_retry", "tabId": 2}}},
+        ]})
+
+        rc = self.dispatch.main(["--watch", "a"])
+
+        self.assertEqual(rc, 0)
+        entries = self._log_entries()
+        create_pos = [i for i, e in enumerate(entries) if e[:2] == ["terminal", "create"]]
+        add_pos = [i for i, e in enumerate(entries) if e[:2] == ["repo", "add"]]
+        self.assertEqual(len(create_pos), 2)
+        self.assertEqual(len(add_pos), 1)
+        self.assertTrue(create_pos[0] < add_pos[0] < create_pos[1])
+        self.assertEqual(entries[add_pos[0]][entries[add_pos[0]].index("--path") + 1], self.project_dir)
+
+        started = self._started_records()
+        self.assertEqual(started[0]["terminal"], "term_retry")
+
+    def test_selector_not_found_falls_back_to_console_when_retry_also_fails(self):
+        self._write_config([{"name": "a", "path": self.project_dir}])
+        self._set_orca_config({"terminal_create_responses": [
+            {"ok": False, "error": {"code": "selector_not_found"}},
+            {"ok": False, "error": {"code": "selector_not_found"}},
+        ]})
+
+        rc = self.dispatch.main(["--watch", "a"])
+
+        self.assertEqual(rc, 0)
+        entries = self._log_entries()
+        self.assertEqual(len([e for e in entries if e[:2] == ["terminal", "create"]]), 2)
+        self.assertEqual(len([e for e in entries if e[:2] == ["repo", "add"]]), 1)
+        started = self._started_records()
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0]["pid"])
+        self.assertNotIn("terminal", started[0])
+
+    # -- AC2: bind mode -----------------------------------------------------
+    def test_bind_mode_argv_has_id_worktree_and_cd_prefix(self):
+        self._write_config([{"name": "a", "path": self.project_dir,
+                             "orca": {"mode": "bind", "repo_id": "repo-1"}}])
+        self._set_orca_config({"repo_list": {"ok": True, "result": {"repos": [
+            {"id": "repo-1", "path": "C:/some/bound/repo", "displayName": "x"}]}}})
+
+        rc = self.dispatch.main(["--watch", "a"])
+
+        self.assertEqual(rc, 0)
+        creates = [e for e in self._log_entries() if e[:2] == ["terminal", "create"]]
+        self.assertEqual(len(creates), 1)
+        argv = creates[0]
+        self.assertEqual(argv[argv.index("--worktree") + 1], "id:repo-1::C:/some/bound/repo")
+        command = argv[argv.index("--command") + 1]
+        self.assertIn(f'cd "{self.project_dir}"', command)
+
+        started = self._started_records()
+        self.assertEqual(started[0]["terminal"], "term_fake1")
+
+    def test_bind_mode_unknown_repo_id_falls_back_to_console(self):
+        self._write_config([{"name": "a", "path": self.project_dir,
+                             "orca": {"mode": "bind", "repo_id": "missing-repo"}}])
+        self._set_orca_config({"repo_list": {"ok": True, "result": {"repos": []}}})
+
+        rc = self.dispatch.main(["--watch", "a"])
+
+        self.assertEqual(rc, 0)
+        creates = [e for e in self._log_entries() if e[:2] == ["terminal", "create"]]
+        self.assertEqual(creates, [])
+        started = self._started_records()
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0]["pid"])
+        self.assertNotIn("terminal", started[0])
+
+    # -- AC4: orca not running -> whole batch falls back -------------------
+    def test_orca_status_not_running_falls_back_whole_batch(self):
+        project_b = tempfile.mkdtemp(prefix="brief-project-")
+        self.addCleanup(shutil.rmtree, project_b, ignore_errors=True)
+        self._write_config([{"name": "a", "path": self.project_dir},
+                             {"name": "b", "path": project_b}])
+        self._set_orca_config({"status": {"ok": False, "error": {"code": "not_running"}}})
+
+        rc = self.dispatch.main(["--watch", "a", "b"])
+
+        self.assertEqual(rc, 0)
+        entries = self._log_entries()
+        self.assertEqual(len(entries), 1)  # only the status preflight
+        self.assertEqual(entries[0][:1], ["status"])
+        self.assertEqual([e for e in entries if e[:2] == ["terminal", "create"]], [])
+        started = self._started_records()
+        self.assertEqual(len(started), 2)
+        for rec in started:
+            self.assertIsNotNone(rec["pid"])
+            self.assertNotIn("terminal", rec)
+
+    # -- AC6: waiter on terminal records ------------------------------------
+    def test_wait_batch_terminal_record_writes_finished_line(self):
+        self._set_orca_config({"terminal_wait": {"ok": True, "result": {"wait": {
+            "satisfied": True, "status": "exited", "exitCode": 7}}}})
+
+        rc = self.dispatch.wait_batch(self.home, "batch-1", ["term_x"])
+
+        self.assertEqual(rc, 0)
+        recs = [json.loads(l) for l in open(os.path.join(self.home, "dispatches.jsonl"), encoding="utf-8")]
+        fin = [r for r in recs if r["type"] == "finished"][0]
+        self.assertEqual(fin["exit_codes"], [7])
+        waits = [e for e in self._log_entries() if e[:2] == ["terminal", "wait"]]
+        self.assertEqual(len(waits), 1)
+        self.assertIn("term_x", waits[0])
+
+    def test_wait_batch_mixed_terminal_then_pid_aligns_exit_codes(self):
+        self._set_orca_config({"terminal_wait": {"ok": True, "result": {"wait": {
+            "satisfied": True, "status": "exited", "exitCode": 3}}}})
+
+        rc = self.dispatch.wait_batch(self.home, "batch-mix", ["term_first", "999999999"])
+
+        self.assertEqual(rc, 0)
+        recs = [json.loads(l) for l in open(os.path.join(self.home, "dispatches.jsonl"), encoding="utf-8")]
+        fin = [r for r in recs if r["type"] == "finished"][0]
+        self.assertEqual(fin["exit_codes"][0], 3)
+        self.assertIsNone(fin["exit_codes"][1])  # unreachable pid -> EXIT_CODE_UNKNOWN -> null
 
 
 if __name__ == "__main__":

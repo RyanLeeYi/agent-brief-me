@@ -232,6 +232,37 @@ order as the prompt (empty array if none). Records written before this field
 existed have no `tasks` key; readers must treat a missing `tasks` as `[]`,
 never error on it.
 
+### Orca window dispatch (F34)
+
+`dispatch.window: "orca"` (config.json, default `"console"`) changes what a
+`--watch` dispatch opens: instead of a native console window
+(`CREATE_NEW_CONSOLE`), each project's interactive `claude` session runs
+inside an Orca terminal tab (`orca terminal create`), so it can be watched
+and reopened without keeping a GUI window on screen. It only ever applies to
+`--watch`; headless (`-p`) dispatch never invokes `orca`. Any project that
+cannot get an Orca terminal (Orca not running, an unresolvable Orca repo
+binding, or a `terminal create` failure) falls back to that project's normal
+console window instead of failing the whole dispatch.
+
+An orca-window `started` record carries `pid: null` and a `terminal` field
+(orca's own terminal handle) instead of a real OS pid:
+
+```json
+{"type": "started", "batch_id": "<uuid4>", "project": "my-project", "pid": null, "terminal": "term_abc123", "started_at": "2026-09-01T01:02:03Z", "log": null, "tasks": []}
+```
+
+A `pid: null` `started` record is always folded as *alive* by every reader
+(the "unknown counts as alive" rule below applies to `null` too) - it only
+ever ends via a `finished` line, or F15's report rule; never by checking
+process liveness. The batch waiter (`dispatch.py --wait`) waits on a
+`terminal` record with `orca terminal wait --terminal <handle> --for exit`
+instead of polling a pid, then writes the same `finished` line format; a
+batch mixing `pid` and `terminal` records waits for both kinds before
+writing its one `finished` line, with `exit_codes` index-aligned to the
+batch's `started` records in write order (a terminal record whose
+`exitCode` orca does not report gets `null`, the same sentinel used for an
+undeterminable pid exit code).
+
 ### Context-refill dispatch (F28)
 
 `scripts/dispatch.py --refill <question_id>` (also reachable from the Web

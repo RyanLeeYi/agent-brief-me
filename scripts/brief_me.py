@@ -294,11 +294,7 @@ def _running_refills(brief_home):
     for r in records:
         if r.get("type") != "started" or r.get("batch_id") in finished_batches:
             continue
-        try:
-            alive = _pid_alive(int(r.get("pid", 0)))
-        except (TypeError, ValueError):
-            alive = True
-        if not alive:
+        if not _pid_alive(r.get("pid")):
             continue
         for t in r.get("tasks", []):
             if isinstance(t, dict) and t.get("kind") == "refill":
@@ -544,7 +540,18 @@ def _api_state(brief_home):
 
 
 def _pid_alive(pid):
-    """False only when we can prove the pid is gone; unknown counts as alive."""
+    """False only when we can prove the pid is gone; unknown counts as
+    alive - including pid=None, which an orca-terminal `started` record
+    always carries (F34, no real OS pid): that session only ends via a
+    `finished` line or F15's report rule, never pid liveness. Also fails
+    open (alive) on any value that cannot be read as an int, rather than
+    raising, since `rec.get("pid")` comes straight from parsed JSON."""
+    if pid is None:
+        return True
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return True
     try:
         if sys.platform == "win32":
             import ctypes
@@ -589,7 +596,7 @@ def running_sessions(path, reports=None):
     now = datetime.now(timezone.utc)
     out = {}
     for rec in started:
-        if rec.get("batch_id") in finished or not _pid_alive(int(rec.get("pid", 0))):
+        if rec.get("batch_id") in finished or not _pid_alive(rec.get("pid")):
             continue
         try:
             t0 = datetime.strptime(rec["started_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -736,10 +743,7 @@ def _requeue_candidates(brief_home):
             continue
 
         if batch["finished"] is None:
-            try:
-                ended = all(not _pid_alive(int(rec.get("pid", 0))) for rec in started)
-            except (TypeError, ValueError):
-                ended = False
+            ended = all(not _pid_alive(rec.get("pid")) for rec in started)
             if not ended:
                 continue
 
@@ -922,8 +926,8 @@ def sessions_view(path, projects_by_path, reports=None, questions=None,
         fin = batch["finished"]
         if fin is None:
             for rec in batch["started"]:
+                pid = rec.get("pid")
                 try:
-                    pid = int(rec.get("pid", 0))
                     t0 = _parse_utc(rec["started_at"])
                 except (KeyError, ValueError):
                     continue

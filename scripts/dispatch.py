@@ -34,9 +34,12 @@ binary, a real ~/.agent-brief, or a real ~/.claude.json:
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -293,8 +296,10 @@ DISPATCH_DEFAULTS = {
     "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
     "model": None,
     "delegate": False,
+    "window": "console",
 }
 PERMISSION_MODES = ("auto", "bypassPermissions")
+WINDOW_VALUES = ("console", "orca")
 
 
 def dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
@@ -305,6 +310,11 @@ def dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     if merged["permission_mode"] not in PERMISSION_MODES:
         print(f'config dispatch.permission_mode {merged["permission_mode"]!r} unknown, using "auto"')
         merged["permission_mode"] = "auto"
+    if merged["window"] is None:
+        merged["window"] = "console"  # missing key or explicit null: same as "console" (F34)
+    elif merged["window"] not in WINDOW_VALUES:
+        print(f'config dispatch.window {merged["window"]!r} unknown, using "console"')
+        merged["window"] = "console"
     return merged
 
 
@@ -449,6 +459,140 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subp
                             creationflags=flags, env=clean_env())
 
 
+# ------------------------------------------------------------------ orca --
+# F34: `dispatch.window: "orca"` opens a --watch session in an Orca terminal
+# tab instead of a native console window, so it survives unattended (no GUI
+# window that must stay visible/focused). Only reached from --watch; headless
+# (-p) dispatch never touches orca.
+
+def run_orca(args: list[str]) -> dict[str, Any]:
+    """Run `orca <args...> --json` and parse its JSON stdout. Resolved via
+    shutil.which (not a bare "orca" argv[0]) because Windows CreateProcess
+    only auto-appends ".exe" to an extension-less program name, never
+    ".cmd"/".bat" - the shim a real (or, in tests, fake) Orca CLI installs -
+    so a bare "orca" silently fails to launch there even when it is on
+    PATH. Both an inability to start the process and non-JSON stdout fold
+    into the same {"ok": False, "error": <str>} shape orca's own failure
+    responses use, so callers only ever check `.get("ok")`."""
+    cmd = shutil.which("orca") or "orca"
+    try:
+        result = subprocess.run([cmd, *args, "--json"], capture_output=True, text=True)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        return {"ok": False, "error": (result.stdout + result.stderr)[-500:]}
+
+
+def _orca_status_ok() -> bool:
+    """The batch-wide preflight before any --watch dispatch with
+    `window: "orca"`: "Orca is not running" is defined (per the F34
+    acceptance) as the `orca status --json` invocation failing or
+    returning `ok: false` - this does not inspect `result.app.running`."""
+    return bool(run_orca(["status"]).get("ok"))
+
+
+def _project_orca_mode(project_cfg: dict[str, Any]) -> dict[str, Any]:
+    """A project's optional `orca` object in config.json's `projects[]`
+    entry: `{"mode": "bind", "repo_id": "..."}` when present and valid,
+    else `{"mode": "repo"}` (the default - also used for a missing key or
+    any other shape)."""
+    orca_cfg = project_cfg.get("orca")
+    if isinstance(orca_cfg, dict) and orca_cfg.get("mode") == "bind":
+        return orca_cfg
+    return {"mode": "repo"}
+
+
+def _orca_repo_path(repo_id: str) -> str | None:
+    """`path` of the Orca-tracked repo with this id (`orca repo list
+    --json`), or None if no such repo is registered."""
+    result = run_orca(["repo", "list"])
+    if not result.get("ok"):
+        return None
+    for repo in result.get("result", {}).get("repos", []):
+        if repo.get("id") == repo_id:
+            return repo.get("path")
+    return None
+
+
+def _quote_command(argv: list[str]) -> str:
+    """Join argv into one shell command-line string, for orca terminal
+    create's --command (a single string, unlike spawn()/spawn_watch()'s
+    argv list) - Windows quoting via the stdlib's own list2cmdline (the
+    same rules CreateProcess itself uses), POSIX via shlex.join."""
+    if sys.platform == "win32":
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
+
+
+def _orca_worktree(project_path: str, project_cfg: dict[str, Any]):
+    """(worktree_arg, command_prefix, error) for `orca terminal create
+    --worktree` (F34): repo mode (default) targets the project path
+    directly; bind mode resolves config's `repo_id` via `orca repo list`
+    and prefixes --command with a `cd` into the project path (the bound
+    Orca repo's own worktree may be a different directory, e.g. a
+    monorepo). `error` is set (the other two None) only when a bind
+    `repo_id` is not found in `orca repo list` - the caller then falls
+    back to a console window for this one project."""
+    mode = _project_orca_mode(project_cfg)
+    if mode.get("mode") != "bind":
+        return f"path:{project_path}", "", None
+    repo_id = mode.get("repo_id")
+    repo_path = _orca_repo_path(repo_id)
+    if repo_path is None:
+        return None, None, f"orca repo_id {repo_id!r} not found in `orca repo list`"
+    return f"id:{repo_id}::{repo_path}", f'cd "{project_path}" && ', None
+
+
+def spawn_orca_watch(brief_home: str, project_name: str, project_path: str, claude_cmd: str,
+                      prompt: str, args: list[str], project_cfg: dict[str, Any]):
+    """Open an interactive claude session inside an Orca terminal tab
+    instead of a native console window (F34). Returns (terminal_handle,
+    error): terminal_handle is orca's "term_..." handle on success; error
+    is a human-readable reason on failure (worktree resolution, or
+    `orca terminal create` itself), and the caller then falls back to a
+    console window for this one project.
+
+    Same prompt-file/opener convention as spawn_watch() (see its
+    docstring): the multi-line prompt is written to a file and referenced
+    by a one-line opener sentence, since a long --command string with
+    embedded newlines is no safer here than it was as a console argv.
+
+    Repo-mode only (`--worktree path:...`): a `selector_not_found` error
+    from `orca terminal create` triggers one `orca repo add --path
+    <project_path>` followed by exactly one retry, per the F34 acceptance
+    - bind mode's repo_id is expected to already be registered, so it gets
+    no such retry.
+    """
+    prompt_path = os.path.join(brief_home, "prompts", f"{os.path.basename(project_path)}.md")
+    os.makedirs(os.path.dirname(prompt_path), exist_ok=True)
+    with open(prompt_path, "w", encoding="utf-8") as fh:
+        fh.write(prompt)
+    opener = f"Read {prompt_path} and follow it as your task brief."
+
+    worktree_arg, cmd_prefix, err = _orca_worktree(project_path, project_cfg)
+    if err:
+        return None, err
+
+    command_line = cmd_prefix + _quote_command([claude_cmd, opener, *args])
+    create_args = ["terminal", "create", "--worktree", worktree_arg,
+                   "--command", command_line, "--title", project_name]
+    result = run_orca(create_args)
+    if not result.get("ok") and worktree_arg.startswith("path:"):
+        error = result.get("error")
+        code = error.get("code") if isinstance(error, dict) else None
+        if code == "selector_not_found":
+            run_orca(["repo", "add", "--path", project_path])
+            result = run_orca(create_args)
+    if not result.get("ok"):
+        return None, f"orca terminal create failed: {result.get('error')}"
+    handle = result.get("result", {}).get("terminal", {}).get("handle")
+    if not handle:
+        return None, "orca terminal create returned no terminal handle"
+    return handle, None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -468,10 +612,15 @@ def dispatches_path(brief_home: str) -> str:
 EXIT_CODE_UNKNOWN = -1
 
 
-def pid_exit_code(pid: int):
-    """None while the process is alive; its exit code once gone, or
+def pid_exit_code(pid: int | None):
+    """None while the process is alive - also when pid is None, which
+    dispatch.py itself never passes here but a caller reading someone
+    else's `started` record might (an orca-terminal session's record
+    always carries `pid: null`, F34); its exit code once gone, or
     EXIT_CODE_UNKNOWN when it is gone but the real code could not be
     determined."""
+    if pid is None:
+        return None
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
@@ -494,9 +643,11 @@ def pid_exit_code(pid: int):
         return None
 
 
-def spawn_waiter(brief_home: str, batch_id: str, pids: list[int]) -> None:
-    """Detached `dispatch.py --wait` so the caller returns immediately."""
-    cmd = [sys.executable, os.path.abspath(__file__), "--wait", batch_id, *map(str, pids)]
+def spawn_waiter(brief_home: str, batch_id: str, targets: list[Any]) -> None:
+    """Detached `dispatch.py --wait` so the caller returns immediately.
+    `targets` is a list of pids (int, console/headless sessions) and/or
+    orca terminal handles (str, "term_...", F34) - see wait_batch()."""
+    cmd = [sys.executable, os.path.abspath(__file__), "--wait", batch_id, *map(str, targets)]
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                               "stderr": subprocess.DEVNULL, "cwd": brief_home}
     if sys.platform == "win32":
@@ -654,22 +805,51 @@ def refill_question(brief_home: str, claude_cmd: str, question_id: str) -> dict[
     return {"ok": True, "project": project, "pid": proc.pid, "log": log_path}
 
 
-def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
+def wait_batch(brief_home: str, batch_id: str, targets: list[Any]) -> int:
+    """Block until every element of `targets` has ended, then write one
+    `finished` line whose `exit_codes` is index-aligned with `targets`
+    (the same order the batch's `started` records were written in, per
+    docs/schema.md). Each target is either a numeric pid (console/headless
+    sessions, polled via pid_exit_code()) or an orca terminal handle
+    ("term_...", F34) waited on with a blocking `orca terminal wait --for
+    exit` call, run in its own thread so pid polling and terminal waits
+    proceed concurrently rather than one after another. A terminal wait
+    that yields no integer exitCode records None, the same sentinel used
+    for an undeterminable pid exit code."""
+    n = len(targets)
+    results: list[int | None] = [None] * n
+    term_indices = [i for i, t in enumerate(targets) if str(t).startswith("term_")]
+    pid_by_index = {i: int(t) for i, t in enumerate(targets) if i not in term_indices}
+
+    def wait_terminal(i: int, handle: str) -> None:
+        outcome = run_orca(["terminal", "wait", "--terminal", handle, "--for", "exit"])
+        code = outcome.get("result", {}).get("wait", {}).get("exitCode") if outcome.get("ok") else None
+        results[i] = code if isinstance(code, int) else None
+
+    threads = [threading.Thread(target=wait_terminal, args=(i, str(targets[i]))) for i in term_indices]
+    for t in threads:
+        t.start()
+
     codes: dict[int, int] = {}
-    while len(codes) < len(pids):
-        for pid in pids:
+    while len(codes) < len(pid_by_index):
+        for pid in pid_by_index.values():
             if pid not in codes:
                 code = pid_exit_code(pid)
                 if code is not None:
                     codes[pid] = code
-        if len(codes) < len(pids):
+        if len(codes) < len(pid_by_index):
             time.sleep(2)
     # EXIT_CODE_UNKNOWN is this module's internal sentinel (never a real exit
     # code); record it as JSON null rather than a made-up number.
-    exit_codes = [None if codes[p] == EXIT_CODE_UNKNOWN else codes[p] for p in pids]
+    for i, pid in pid_by_index.items():
+        results[i] = None if codes[pid] == EXIT_CODE_UNKNOWN else codes[pid]
+
+    for t in threads:
+        t.join()
+
     atomic_append_line(dispatches_path(brief_home), {
         "type": "finished", "batch_id": batch_id, "finished_at": _now(),
-        "exit_codes": exit_codes,
+        "exit_codes": results,
     })
     projects = []
     for line in open(dispatches_path(brief_home), encoding="utf-8"):
@@ -680,7 +860,7 @@ def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
     if notify:
         try:
             subprocess.run(list(notify) + [",".join(projects), "batch", "none",
-                                           f"{len(pids)}/{len(pids)} sessions finished"], check=False)
+                                           f"{n}/{n} sessions finished"], check=False)
         except OSError:
             pass
     return 0
@@ -688,7 +868,7 @@ def wait_batch(brief_home: str, batch_id: str, pids: list[int]) -> int:
 
 def main(argv: list[str]) -> int:
     if argv[:1] == ["--wait"]:
-        return wait_batch(get_brief_home(), argv[1], [int(p) for p in argv[2:]])
+        return wait_batch(get_brief_home(), argv[1], argv[2:])
     if argv[:1] == ["--refill"]:
         if len(argv) != 2:
             print(json.dumps({"ok": False, "error": "usage: dispatch.py --refill <question_id>"}))
@@ -708,7 +888,7 @@ def main(argv: list[str]) -> int:
     claude_json_path = get_claude_json_path()
 
     config = load_config(brief_home)
-    projects_by_name = {p["name"]: p["path"] for p in config.get("projects", [])}
+    projects_by_name = {p["name"]: p for p in config.get("projects", [])}
     settings = dispatch_settings(config)
     # CLI flag is an explicit override; config dispatch.watch only applies when neither is given.
     watch = watch_flag if (watch_flag or no_watch_flag) else bool(settings["watch"])
@@ -718,15 +898,25 @@ def main(argv: list[str]) -> int:
     answers_path = os.path.join(brief_home, "answers.jsonl")
     answers_by_question = fold_answers(answers_path)
 
+    # F34: window: "orca" only ever applies to a --watch batch; headless (-p)
+    # dispatch never calls orca. The "Orca running?" check is batch-wide (one
+    # call, not one per project) and never calls `orca open` - starting the
+    # GUI unattended is out of bounds.
+    use_orca = watch and settings["window"] == "orca"
+    if use_orca and not _orca_status_ok():
+        print("orca status check failed or Orca is not running; falling back to console windows")
+        use_orca = False
+
     exit_code = 0
     batch_id = str(uuid.uuid4())
-    pids: list[int] = []
+    targets: list[Any] = []
     for name in argv:
-        path = projects_by_name.get(name)
-        if path is None:
+        project_cfg = projects_by_name.get(name)
+        if project_cfg is None:
             print(f"{name}: unknown project, skipping")
             exit_code = 1
             continue
+        path = project_cfg["path"]
 
         unconsumed = unconsumed_answers_for(name, question_project, answers_by_question)
         prompt = build_prompt(name, unconsumed, delegate=bool(settings["delegate"]), config=config)
@@ -740,31 +930,52 @@ def main(argv: list[str]) -> int:
                 print(f"warning: {name}: could not pre-accept trust dialog in "
                       f"{claude_json_path} ({exc}), continuing", file=sys.stderr)
 
-        try:
-            if watch:
-                proc = spawn_watch(claude_cmd, path, prompt, args)
-            else:
-                proc = spawn(claude_cmd, path, prompt, log_path, args)
-        except OSError as exc:
-            print(f"{name}: spawn failed: {exc}")
-            exit_code = 1
-            continue
+        terminal_handle = None
+        if use_orca:
+            terminal_handle, orca_error = spawn_orca_watch(
+                brief_home, name, path, claude_cmd, prompt, args, project_cfg)
+            if orca_error:
+                print(f"{name}: {orca_error}, falling back to console window")
 
-        print(f"{name}: opened in new window" if watch else f"{name}: dispatched, log={log_path}")
-        pids.append(proc.pid)
-        atomic_append_line(dispatches_path(brief_home), {
-            "type": "started", "batch_id": batch_id, "project": name, "pid": proc.pid,
+        if watch and terminal_handle is None:
+            try:
+                proc = spawn_watch(claude_cmd, path, prompt, args)
+            except OSError as exc:
+                print(f"{name}: spawn failed: {exc}")
+                exit_code = 1
+                continue
+            print(f"{name}: opened in new window")
+            target, record_pid, record_terminal = proc.pid, proc.pid, None
+        elif watch:
+            print(f"{name}: opened in Orca terminal")
+            target, record_pid, record_terminal = terminal_handle, None, terminal_handle
+        else:
+            try:
+                proc = spawn(claude_cmd, path, prompt, log_path, args)
+            except OSError as exc:
+                print(f"{name}: spawn failed: {exc}")
+                exit_code = 1
+                continue
+            print(f"{name}: dispatched, log={log_path}")
+            target, record_pid, record_terminal = proc.pid, proc.pid, None
+
+        targets.append(target)
+        started_record = {
+            "type": "started", "batch_id": batch_id, "project": name, "pid": record_pid,
             "started_at": _now(), "log": None if watch else log_path,
             "tasks": tasks_for(unconsumed, question_project),
-        })
+        }
+        if record_terminal is not None:
+            started_record["terminal"] = record_terminal
+        atomic_append_line(dispatches_path(brief_home), started_record)
 
         for entry in unconsumed:
             updated = dict(entry["record"])
             updated["consumed"] = True
             atomic_append_line(answers_path, updated)
 
-    if pids:
-        spawn_waiter(brief_home, batch_id, pids)
+    if targets:
+        spawn_waiter(brief_home, batch_id, targets)
     return exit_code
 
 

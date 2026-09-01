@@ -640,6 +640,79 @@ class BriefMeAPITestCase(unittest.TestCase):
         self.assertEqual(fin["finished_at"], ts(started_at + timedelta(minutes=3)))
         self.assertEqual(fin["duration_seconds"], 180)
 
+    # -- F34: pid: null (orca-window) started records --------------------
+    def test_state_pid_null_started_record_shows_running_and_not_requeued(self):
+        """F34: an orca-window `started` record (pid: null, terminal:
+        "term_...") must not raise in any pid-liveness check - it shows up
+        in both `running` and `sessions.running` (pid: null there too),
+        and F24's requeue must not touch its batch while it has no
+        `finished` line and no report (still counts as alive)."""
+        qid = self._add_question(project="demo", title="Pick one", choices=["A"])
+        self._consumed_answer(qid)
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": None,
+             "terminal": "term_abc123", "started_at": self._ts(now - timedelta(minutes=1)),
+             "log": None, "tasks": [{"feature": None, "kind": "question", "title": "Pick one"}]},
+        ])
+
+        status, data = self._get("/api/state")
+
+        self.assertEqual(status, 200)
+        self.assertIn("demo", data["running"])
+        run = data["sessions"]["running"][0]
+        self.assertIsNone(run["pid"])
+        self.assertEqual(run["batch_id"], batch)
+        self.assertEqual(data["requeued"], {})  # still running -> not requeued
+        answers_by_question = brief_me.fold_answers(self._answers_path())
+        self.assertTrue(answers_by_question[qid]["consumed"])
+
+    def test_state_pid_null_started_record_ends_via_report(self):
+        """F34/F15: an orca-window session with no `finished` line still
+        ends once a report is filed at/after its started_at, same as a
+        real-pid session; the resulting finished row's pid is null."""
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        now = datetime.now(timezone.utc)
+        started_at = now - timedelta(minutes=10)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": None,
+             "terminal": "term_xyz", "started_at": self._ts(started_at), "log": None, "tasks": []},
+        ])
+
+        _, data = self._get("/api/state")
+        self.assertEqual(len(data["sessions"]["running"]), 1)
+        self.assertIn("demo", data["running"])
+
+        self._add_report(project="demo", summary="x")
+        _, data = self._get("/api/state")
+        self.assertEqual(data["sessions"]["running"], [])
+        self.assertNotIn("demo", data["running"])
+        fin = data["sessions"]["finished"][0]
+        self.assertEqual(fin["ended_by"], "report")
+        self.assertIsNone(fin["pid"])
+
+    def test_requeue_with_pid_null_and_finished_line_still_requeues(self):
+        """F24 condition (b) is satisfied by a `finished` line regardless
+        of pid; an orca-window batch's finished-based requeue must not
+        regress just because its started record carries pid: null."""
+        qid = self._add_question(project="demo", title="Pick one", choices=["A"])
+        self._consumed_answer(qid)
+        now = datetime.now(timezone.utc)
+        batch = str(uuid.uuid4())
+        self._write_dispatches([
+            {"type": "started", "batch_id": batch, "project": "demo", "pid": None,
+             "terminal": "term_abc", "started_at": self._ts(now - timedelta(minutes=10)),
+             "log": None, "tasks": [{"feature": None, "kind": "question", "title": "Pick one"}]},
+            {"type": "finished", "batch_id": batch,
+             "finished_at": self._ts(now - timedelta(minutes=5)), "exit_codes": [0]},
+        ])
+
+        data = brief_me._cmd_load([])
+
+        self.assertEqual(data["requeued"], {"demo": ["Pick one"]})
+
     # -- F19: report_view() parts + feature_chip ------------------------
     def test_report_view_three_part_summary_splits_into_parts_and_chip(self):
         rid = self._add_report(

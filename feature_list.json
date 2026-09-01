@@ -4,30 +4,6 @@
  "archive": "docs/archive/features.jsonl",
  "features": [
   {
-   "id": "F34",
-   "name": "--watch 派工可開在 Orca 分頁（dispatch.window=orca），不再跳獨立 cmd 視窗",
-   "status": "failing",
-   "rationale": "Ryan 平常在 Orca 裡跑 Claude Code；/brief-me 的 --watch 派工每個專案跳一個 cmd 視窗，桌面散落、看不到 Orca 的 worktree／瀏覽器脈絡。Orca CLI 已實測可用（orca terminal create／wait --for exit／repo add，v1.4.193）。取捨：只改 --watch 路徑，headless -p 與 Web UI Settings 不動（Web 派工帶 --watch 時走同一 spawn 路徑，自然套用，不另做設定 UI）；Orca 拿不到 OS pid，改用 terminal handle 等結束，讀取端要接受 pid 為 null。",
-   "acceptance": [
-    "config.json 的 dispatch 物件新增可選鍵 window，值為 \"console\"（預設，缺鍵或 null 視同 console）或 \"orca\"；其餘值印警告並視同 console。window 為 console 時，dispatch.py 的所有行為（含 started 記錄形狀）與本 feature 之前逐位元相同。",
-    "window 為 orca 且 --watch 時，每個專案不再用 CREATE_NEW_CONSOLE 開視窗，而是執行 orca terminal create --json，--command 為 claude 加既有 opener 句（prompt 檔仍照現行寫在 ~/.agent-brief/prompts/<cwd 目錄名>.md）與 claude_args() 的旗標，--title 為專案名。--worktree 由該專案在 config.projects[] 的可選 orca 物件決定：{\"mode\":\"repo\"} 或缺鍵 → path:<專案 path>；{\"mode\":\"bind\",\"repo_id\":\"<Orca repo id>\"} → id:<repo_id>::<該 repo 的 path>（path 由 orca repo list --json 依 id 查得），且 --command 前綴 cd 進專案 path。bind 的 repo_id 在 orca repo list 中不存在時該專案退回 console 視窗並印出原因。",
-    "repo 模式下 selector 回 selector_not_found 時，先執行 orca repo add --path <專案 path> --json 再重試一次 terminal create；仍失敗則該專案退回 console 視窗並印出原因，其餘專案照常。",
-    "window 為 orca 且本次為 --watch 派工時，派工前先 orca status --json；Orca 未在跑（指令失敗或 ok 為 false）時整批退回 console 視窗並印一行說明，不呼叫 orca open（無人看管時不得啟動 GUI）。window 為 orca 但本次為 headless（-p）派工時完全不呼叫 orca。",
-    "orca 模式的 started 記錄 pid 為 null 並新增 terminal 欄位（orca 回的 term_ handle）；docs/schema.md 的 dispatches.jsonl 段落記載此形狀，並寫明 pid 為 null 的 started 記錄在讀取端視同存活（只由 finished 行或 F15 的 report 規則結束）。brief_me.py 與 dispatch.py 所有讀 pid 的位置（running 推導、sessions_view 的 running 列、F24 requeue 條件 (b)、refill 的 already_running 判定）對 pid 為 null 不得拋例外（含 TypeError）且依上述規則判定；sessions 列的 pid 欄位對 orca 記錄輸出 null。",
-    "waiter（dispatch.py --wait）對帶 terminal 的 started 記錄改以 orca terminal wait --terminal <handle> --for exit 等待，該分頁程式結束後照既有格式寫 finished 行，exit_codes 取 orca 回的 exitCode（取不到記 null）。同一批混有 pid 與 terminal 兩種記錄時兩者都要等完才寫 finished；exit_codes 必須與該 batch 的 started 記錄寫入順序逐位對齊（brief_me.py 依 index 配對），terminal 記錄取不到 exitCode 時該位置寫 null。",
-    "測試（stdlib unittest，BRIEF_HOME 暫存目錄，orca 指令以 PATH 上的假 orca 腳本替身，不依賴真 Orca）至少涵蓋：window 缺鍵／console 時不呼叫 orca 且 started 記錄含 pid；orca 模式下 terminal create 的 argv 含正確 --worktree、--title 與 opener；selector_not_found 觸發 repo add 後重試；bind 模式 argv 含 id:<repo_id>::<path> 與 cd 前綴、repo_id 不存在退回 console；orca status 失敗整批退回 console；pid 為 null 的 started 記錄在 /api/state 顯示 running 且不被 F24 requeue，收到 report 後結束；waiter 對 terminal 記錄寫出 finished 行；一批兩專案（第一個 terminal、第二個 pid）的 finished 行 exit_codes[0] 對應第一個 started 記錄；window=orca 且 --no-watch 時假 orca 一次都沒被呼叫。既有測試全綠。",
-    "新增與修改的對外檔案（scripts/、docs/、README）全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
-   ],
-   "touches": [
-    "scripts/dispatch.py",
-    "scripts/brief_me.py",
-    "docs/schema.md",
-    "tests/test_dispatch_batch.py",
-    "tests/test_brief_me_api.py"
-   ],
-   "signed_off": true
-  },
-  {
    "id": "F35",
    "name": "brief-init 問要不要用 Orca 並逐專案設定 worktree 模式；brief-me 派工前偵測 Orca 未開",
    "status": "failing",

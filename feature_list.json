@@ -2,33 +2,5 @@
  "project": "agent-brief-me",
  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
  "archive": "docs/archive/features.jsonl",
- "features": [
-  {
-   "id": "F35",
-   "name": "brief-init 問要不要用 Orca 並逐專案設定 worktree 模式；brief-me 派工前偵測 Orca 未開",
-   "status": "failing",
-   "rationale": "F34 的 config 鍵沒有入口就只能手改 JSON。init 是唯一的設定訪談；brief-me 是互動場，Orca 沒開時可以問人，dispatch.py 無人看管時不能。本條只管 CLI skill 兩端；Web UI Settings 的入口另開 F36。",
-   "prerequisites": [
-    "F34"
-   ],
-   "acceptance": [
-    "brief-init Step 3 在既有七題之前新增第 0 題：先執行 orca status --json 探測；orca 不在 PATH 或指令失敗 → 不問，dispatch.window 設 \"console\"，並印一行「Orca CLI not found, dispatch windows will use the system console」；探測成功 → 問「Open dispatch windows inside Orca?」，是 → \"orca\"，否 → \"console\"。重跑 init 時以現值為預設選項。",
-    "window 選 orca 時，先執行 orca repo list --json，再對 config.projects[] 每個專案問一題「How should <name> open in Orca?」，選項 \"Own repo\"（寫 orca:{mode:\"repo\"}，並立即執行 orca repo add --path <path> --json，失敗一律忽略、只印一行警告）與每一個祖先工作區各一個選項 \"Under <displayName>\"（寫 orca:{mode:\"bind\",\"repo_id\":<id>}）；沒有祖先工作區時只剩 Own repo 一個選項就不問、直接寫 repo。重跑時已有 orca 物件的專案以現值為預設。window 為 console 時不問這段，且不刪除專案既有的 orca 物件。 「祖先工作區」定義：對 orca repo list 的每個 path 與專案 path 各做 os.path.normcase(os.path.abspath())，以路徑分量比對，repo path 是專案 path 的嚴格前綴（不含相等）才算祖先；相等（專案自己被 repo add 之後）與大小寫、尾斜線差異依此規則判定。",
-    "brief-me Step 4 在呼叫 dispatch.py 之前：讀 config；當本次派工會帶 --watch（$ARGUMENTS 含 --watch，或未指定且 config.dispatch.watch 為 true）且 dispatch.window 為 orca 時，先執行 orca status --json；其他情況不探測、不多問。探測失敗則用 AskUserQuestion 問「Orca is not running」三選一：\"Open Orca\"（執行 orca open --json；回 ok 後直接派工，不再 poll；orca open 失敗則再發一次 AskUserQuestion，只留 \"Use console windows for this batch\" 與 \"Cancel dispatch\"）、\"Use console windows for this batch\"（派工時加 --no-orca 旗標）、\"Cancel dispatch\"。",
-    "dispatch.py 接受 --no-orca 旗標：本次派工一律走 console 路徑，不改 config。docs/schema.md 記載 window、projects[].orca（{mode:\"repo\"} 或 {mode:\"bind\", repo_id}）與 --no-orca 旗標的語意。",
-    "測試：tests/ 對 --no-orca 覆寫加至少一條 unittest；brief-init 與 brief-me 兩份 SKILL.md 的新增段落由使用者本人各走一次，結果寫入 docs/evidence/F35.md，至少記錄：init 第 0 題實際出現的選項與所選值、每個專案實際列出的選項清單、一次 headless（window=orca、watch=false）的 brief-me 派工確認完全沒被問、一次 orca open 失敗情境的實跑結果、--no-orca 那批的視窗實際開在哪。",
-    "新增與修改的對外檔案（skills/、docs/、README）全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
-   ],
-   "touches": [
-    "skills/brief-init/SKILL.md",
-    "skills/brief-me/SKILL.md",
-    "scripts/dispatch.py",
-    "docs/schema.md",
-    "tests/test_dispatch_batch.py",
-    "README.md",
-    "docs/evidence/F35.md"
-   ],
-   "signed_off": true
-  }
- ]
+ "features": []
 }

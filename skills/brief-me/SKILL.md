@@ -91,17 +91,40 @@ python scripts/brief_me.py unconsumed
 ```
 
 If `projects` is empty, finish. Otherwise ask, per project (alphabetical),
-whether to dispatch it now. If any were confirmed, invoke once from the
-repo/plugin root:
+whether to dispatch it now. If none were confirmed, finish.
+
+Before dispatching, determine whether this batch will run with `--watch`:
+true if `$ARGUMENTS` contains `--watch`, else `~/.agent-brief/config.json`'s
+`dispatch.watch` (read the file directly; missing/`false` counts as not
+watching). Only when that is true AND `config.json`'s `dispatch.window` is
+`"orca"`, run `orca status --json` (Bash) first:
+
+- Succeeds (`ok: true`) -> continue to the dispatch call below, unchanged.
+- Fails (command errors, or `ok: false`) -> ask (AskUserQuestion) "Orca is
+  not running", three options:
+  - **"Open Orca"** -> run `orca open --json`. `ok: true` -> continue to
+    the dispatch call below (do not poll or re-check status again).
+    Failure -> ask (AskUserQuestion) "Orca is not running" once more, this
+    time with only **"Use console windows for this batch"** and
+    **"Cancel dispatch"**.
+  - **"Use console windows for this batch"** -> continue to the dispatch
+    call below with `--no-orca` added.
+  - **"Cancel dispatch"** -> do not invoke `dispatch.py`; finish this step.
+
+Any other case (not watching this batch, or `window` is not `"orca"`) skips
+this probe entirely - no extra Bash call, no extra question.
+
+If dispatch was not cancelled above, invoke once from the repo/plugin root:
 
 ```
-python scripts/dispatch.py [--watch] <confirmed-project-1> <confirmed-project-2> ...
+python scripts/dispatch.py [--watch] [--no-orca] <confirmed-project-1> <confirmed-project-2> ...
 ```
 
 Pass `--watch` if and only if `$ARGUMENTS` contains `--watch` (opens an
 interactive `claude` window per project instead of a headless `claude -p`).
-Marking answers consumed, logging and unknown-project handling belong to
-`dispatch.py`, not here.
+Pass `--no-orca` only when "Use console windows for this batch" was chosen
+above. Marking answers consumed, logging and unknown-project handling belong
+to `dispatch.py`, not here.
 
 ## Mid-session exit
 

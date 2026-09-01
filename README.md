@@ -68,7 +68,7 @@ flowchart LR
 ```
 
 1. **Before bed** - run `/brief-me`. It shows what came in, walks you through pending questions, then offers to dispatch a follow-up worker for each project that has a fresh answer.
-2. **Dispatch** - confirmed projects get a background `claude -p` session in their repo, prompt pre-loaded with your answers. Add `--watch` to open visible windows instead.
+2. **Dispatch** - confirmed projects get a background `claude -p` session in their repo, prompt pre-loaded with your answers. Add `--watch` to open visible windows instead, or `--no-orca` to force those windows into native consoles for one batch even when `dispatch.window` is `"orca"`.
 3. **Sleep** - workers run unattended. When blocked on something only you can decide they file a question; before finishing they file a report.
 4. **In the morning** - run `/brief-me` again. Each report and question shows `resume: claude --resume <session_id>`; run it inside that project's directory to ask the worker directly.
 
@@ -150,6 +150,7 @@ arbitrary argv arrays) or escalate its own permissions. Edit those fields direct
   "allowed_tools": "Bash,Read,Edit,Write,Glob,Grep,Skill",
   "model": null,
   "delegate": false,
+  "window": "console",
   "context_model": "sonnet",
   "context_language": null,
   "plain_language": "off"
@@ -163,6 +164,7 @@ arbitrary argv arrays) or escalate its own permissions. Edit those fields direct
 | `allowed_tools` | comma-separated `--allowedTools` value used with `auto` |
 | `model` | `--model` for the worker; `null` keeps Claude Code's default |
 | `delegate` | `false` (default) tells workers to work solo and blocks the `Agent` tool; `true` lets workers dispatch subagents - it requires your environment to already have the `baton-dispatch` skill and an `executor` agent type installed, neither of which ships with this plugin |
+| `window` | `"console"` (default) or `"orca"` - opens `--watch` sessions inside an Orca terminal tab instead of a native window; per-project binding (`projects[].orca`, set by `brief-init`) and the `--no-orca` CLI override are documented in `docs/schema.md`'s "Orca window dispatch" section |
 | `context_model` | `--model` for context-refill sessions (the inbox's "Add context" action / `dispatch.py --refill`); defaults to `"sonnet"` when missing or null, independent of `model` above - pick something cheap, since a `--resume` session pays full price with no cache |
 | `context_language` | free-form language description (e.g. `"Traditional Chinese (keep technical terms in English)"`) added to a context-refill session's prompt as a requirement for its replacement question's title/body; `null` (default) leaves that prompt unchanged |
 | `plain_language` | `"off"` (default, no change), `"refill"` (context-refill replacement questions must be plain, non-technical language), or `"all"` (that requirement also applies to every question/report a regular worker files via `brief-submit`, combined with `context_language` when it is set) |

@@ -464,6 +464,11 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subp
 # tab instead of a native console window, so it survives unattended (no GUI
 # window that must stay visible/focused). Only reached from --watch; headless
 # (-p) dispatch never touches orca.
+# F35: `--no-orca` on the CLI forces this one dispatch to skip Orca and use
+# console windows instead, without touching config.json - see `use_orca` in
+# main(). `is_ancestor_workspace()` below is used by brief-init's per-project
+# Orca binding question (skills/brief-init/SKILL.md), not by dispatch.py's
+# own runtime path.
 
 def run_orca(args: list[str]) -> dict[str, Any]:
     """Run `orca <args...> --json` and parse its JSON stdout. Resolved via
@@ -514,6 +519,22 @@ def _orca_repo_path(repo_id: str) -> str | None:
         if repo.get("id") == repo_id:
             return repo.get("path")
     return None
+
+
+def is_ancestor_workspace(repo_path: str, project_path: str) -> bool:
+    """True when `repo_path` is a strict path-component ancestor of
+    `project_path` (F35, used by brief-init's per-project Orca binding
+    question - see skills/brief-init/SKILL.md). Both sides are normalized
+    via os.path.normcase(os.path.abspath(...)) then split into path
+    components, so case and trailing-slash differences never affect the
+    comparison. Equal paths (a project already registered as its own Orca
+    repo) are NOT an ancestor - only a strictly shorter prefix counts."""
+    def parts(path: str) -> list[str]:
+        drive, rest = os.path.splitdrive(os.path.normcase(os.path.abspath(path)))
+        return [drive, *[p for p in rest.split(os.sep) if p]]
+
+    repo_parts, project_parts = parts(repo_path), parts(project_path)
+    return len(repo_parts) < len(project_parts) and project_parts[:len(repo_parts)] == repo_parts
 
 
 def _quote_command(argv: list[str]) -> str:
@@ -878,9 +899,10 @@ def main(argv: list[str]) -> int:
         print(json.dumps(result))
         return 0 if result.get("ok") else 1
     watch_flag, no_watch_flag = "--watch" in argv, "--no-watch" in argv
-    argv = [a for a in argv if a not in ("--watch", "--no-watch")]
+    no_orca_flag = "--no-orca" in argv  # F35: this run only, never writes config.json
+    argv = [a for a in argv if a not in ("--watch", "--no-watch", "--no-orca")]
     if not argv or (watch_flag and no_watch_flag):
-        print("usage: dispatch.py [--watch | --no-watch] <project> [<project> ...]", file=sys.stderr)
+        print("usage: dispatch.py [--watch | --no-watch] [--no-orca] <project> [<project> ...]", file=sys.stderr)
         return 2 if (watch_flag and no_watch_flag) else 1
 
     brief_home = get_brief_home()
@@ -902,7 +924,7 @@ def main(argv: list[str]) -> int:
     # dispatch never calls orca. The "Orca running?" check is batch-wide (one
     # call, not one per project) and never calls `orca open` - starting the
     # GUI unattended is out of bounds.
-    use_orca = watch and settings["window"] == "orca"
+    use_orca = watch and settings["window"] == "orca" and not no_orca_flag
     if use_orca and not _orca_status_ok():
         print("orca status check failed or Orca is not running; falling back to console windows")
         use_orca = False

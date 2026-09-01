@@ -244,6 +244,24 @@ cannot get an Orca terminal (Orca not running, an unresolvable Orca repo
 binding, or a `terminal create` failure) falls back to that project's normal
 console window instead of failing the whole dispatch.
 
+Each project's optional `orca` object in `config.json`'s `projects[]` entry
+(set by `brief-init`'s per-project Orca binding question, F35) controls
+which Orca repo that project's `--watch` session opens in:
+`{"mode": "repo"}` (the default - used for a missing `orca` key or any
+other shape too) targets the project's own directory directly
+(`--worktree path:<project_path>`); `{"mode": "bind", "repo_id": "..."}`
+instead resolves that id via `orca repo list` and prefixes the launched
+command with a `cd` into the project directory - for a project that lives
+inside a repo Orca already tracks as a workspace (e.g. a monorepo) rather
+than being its own Orca repo.
+
+`--no-orca` (CLI flag, F35) forces one `dispatch.py` invocation to skip
+Orca entirely and use console windows, without writing anything to
+`config.json`'s `dispatch.window` or any project's `orca` field - the same
+`use_orca = False` fallback path any other per-project Orca failure takes.
+Like `window` itself, it only ever affects a `--watch` batch; headless
+(`-p`) dispatch never touches orca either way.
+
 An orca-window `started` record carries `pid: null` and a `terminal` field
 (orca's own terminal handle) instead of a real OS pid:
 

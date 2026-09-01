@@ -93,12 +93,20 @@ Repeat until the user is done:
 
 ## Step 3: Dispatch settings
 
-These control how `scripts/dispatch.py` launches worker sessions. Ask the
-seven questions below with AskUserQuestion, then read `config.json`, set the
-answers under its `dispatch` object (create it if missing, keep any other
-keys), and write the whole file back. On a rerun, show the current value of
-each as the default option.
+These control how `scripts/dispatch.py` launches worker sessions. Ask
+question 0 (probing first, as described below), then the seven questions
+below it, all with AskUserQuestion, then read `config.json`, set the answers
+under its `dispatch` object (create it if missing, keep any other keys), and
+write the whole file back. On a rerun, show the current value of each
+(including `window`) as the default option.
 
+0. **Open dispatch windows inside Orca?** -> `window`: first probe by
+   running `orca status --json` (Bash). If the command is not found on
+   `PATH`, or it exits non-zero, do not ask this question at all: set
+   `window` to `"console"` and print exactly this line: "Orca CLI not
+   found, dispatch windows will use the system console". If the probe runs
+   successfully, ask (AskUserQuestion) "Open dispatch windows inside
+   Orca?" -> `"orca"` (yes) or `"console"` (no, default).
 1. **Show a terminal window?** -> `watch`: `false` (headless `claude -p`,
    output goes to `~/.agent-brief/logs/`; default) or `true` (opens an
    interactive `claude` window per project so the user can watch).
@@ -145,6 +153,42 @@ each as the default option.
    replacement questions must be written in plain, non-technical language),
    or `"all"` (that requirement also applies to every question/report a
    regular dispatched worker files via `brief-submit`).
+
+### Per-project Orca binding (only when `window` is `"orca"`)
+
+Skip this whole sub-step - no questions, no `config.json` change to any
+project's `orca` field - when `window` (from question 0) is `"console"`.
+Never delete a project's existing `orca` object in that case either.
+
+When `window` is `"orca"`, after writing `config.json` above, run `orca
+repo list --json` once. Then, for each entry in `config.json`'s `projects`
+array (one at a time, in order):
+
+1. Compute its ancestor Orca repos: the `orca repo list` entries whose
+   `path` is a strict path-component ancestor of this project's `path` -
+   use `is_ancestor_workspace(repo_path, project_path)` from
+   `scripts/dispatch.py` (run from the repo/plugin root, e.g.
+   `python3 -c "import sys; sys.path.insert(0, 'scripts'); from dispatch
+   import is_ancestor_workspace; print(is_ancestor_workspace(sys.argv[1],
+   sys.argv[2]))" <repo_path> <project_path>`); an equal path is never an
+   ancestor.
+2. Build the option list: `"Own repo"`, plus one `"Under <displayName>"`
+   per ancestor found (in the order `orca repo list` returned them).
+3. If there are no ancestors, only `"Own repo"` is possible: skip asking
+   and go straight to the "Own repo" action below.
+4. Otherwise ask (AskUserQuestion) "How should <name> open in Orca?" with
+   those options. On a rerun, default to the option matching the project's
+   current `orca` object if it has one and it still resolves (its
+   `repo_id` is still in this run's `orca repo list`), else `"Own repo"`.
+5. **"Own repo"** chosen (or auto-selected in step 3): set this project's
+   `orca` to `{"mode": "repo"}`, then immediately run `orca repo add
+   --path <path> --json`; ignore any failure other than printing one
+   warning line.
+   **"Under <displayName>"** chosen: set this project's `orca` to
+   `{"mode": "bind", "repo_id": "<that repo's id>"}`.
+6. Read `config.json`, set this one project's `orca` field, and write the
+   whole file back - one project at a time, so an interrupted run never
+   leaves a decided project unrecorded.
 
 ## Step 4: Agent-side protocol sentence
 

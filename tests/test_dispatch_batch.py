@@ -155,6 +155,51 @@ class TasksForTests(unittest.TestCase):
         self.assertEqual(len(self._run(titles)), 2)
 
 
+class IsAncestorWorkspaceTests(unittest.TestCase):
+    """F35: is_ancestor_workspace() - strict path-component prefix check
+    used by brief-init's per-project Orca binding question."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from dispatch import is_ancestor_workspace  # noqa: E402
+
+        self.is_ancestor_workspace = is_ancestor_workspace
+
+    def test_strict_prefix_is_ancestor(self):
+        base = tempfile.mkdtemp(prefix="brief-anc-")
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        child = os.path.join(base, "proj")
+        os.makedirs(child)
+        self.assertTrue(self.is_ancestor_workspace(base, child))
+
+    def test_equal_paths_not_ancestor(self):
+        base = tempfile.mkdtemp(prefix="brief-anc-")
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        self.assertFalse(self.is_ancestor_workspace(base, base))
+
+    def test_trailing_slash_difference_still_matches(self):
+        base = tempfile.mkdtemp(prefix="brief-anc-")
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        child = os.path.join(base, "proj")
+        os.makedirs(child)
+        self.assertTrue(self.is_ancestor_workspace(base + os.sep, child))
+
+    @unittest.skipUnless(sys.platform == "win32", "os.path.normcase only folds case on Windows")
+    def test_case_difference_still_matches_on_windows(self):
+        base = tempfile.mkdtemp(prefix="brief-anc-")
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        child = os.path.join(base, "proj")
+        os.makedirs(child)
+        self.assertTrue(self.is_ancestor_workspace(base.upper(), child))
+
+    def test_unrelated_paths_not_ancestor(self):
+        a = tempfile.mkdtemp(prefix="brief-anc-a-")
+        b = tempfile.mkdtemp(prefix="brief-anc-b-")
+        self.addCleanup(shutil.rmtree, a, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, b, ignore_errors=True)
+        self.assertFalse(self.is_ancestor_workspace(a, b))
+
+
 class DelegateDefaultTests(unittest.TestCase):
     """F25: dispatch.delegate defaults to False (no config, or a dispatch
     section missing the key); an explicit `delegate: true` in config.json
@@ -549,6 +594,22 @@ class OrcaWindowTests(unittest.TestCase):
         for rec in started:
             self.assertIsNotNone(rec["pid"])
             self.assertNotIn("terminal", rec)
+
+    # -- F35: --no-orca forces console windows, config.json untouched ------
+    def test_no_orca_flag_skips_orca_even_when_window_orca(self):
+        self._write_config([{"name": "a", "path": self.project_dir}])
+        config_path = os.path.join(self.home, "config.json")
+        before = open(config_path, encoding="utf-8").read()
+
+        rc = self.dispatch.main(["--watch", "--no-orca", "a"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._log_entries(), [])  # orca never invoked at all
+        started = self._started_records()
+        self.assertEqual(len(started), 1)
+        self.assertIsNotNone(started[0]["pid"])
+        self.assertNotIn("terminal", started[0])
+        self.assertEqual(open(config_path, encoding="utf-8").read(), before)
 
     # -- AC6: waiter on terminal records ------------------------------------
     def test_wait_batch_terminal_record_writes_finished_line(self):

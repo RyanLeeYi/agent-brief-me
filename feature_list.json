@@ -2,5 +2,84 @@
  "project": "agent-brief-me",
  "description": "Claude Code plugin：agent 的非同步決策收件匣。工作中的 agent 把問題與報告投進共用 JSONL 收件匣，使用者在睡前／早上兩站用 /brief 批次審核，並派出 headless session 繼續工作。",
  "archive": "docs/archive/features.jsonl",
- "features": []
+ "features": [
+  {
+   "id": "F34",
+   "name": "--watch 派工可開在 Orca 分頁（dispatch.window=orca），不再跳獨立 cmd 視窗",
+   "status": "failing",
+   "rationale": "Ryan 平常在 Orca 裡跑 Claude Code；/brief-me 的 --watch 派工每個專案跳一個 cmd 視窗，桌面散落、看不到 Orca 的 worktree／瀏覽器脈絡。Orca CLI 已實測可用（orca terminal create／wait --for exit／repo add，v1.4.193）。取捨：只改 --watch 路徑，headless -p 與 Web UI Settings 不動（Web 派工帶 --watch 時走同一 spawn 路徑，自然套用，不另做設定 UI）；Orca 拿不到 OS pid，改用 terminal handle 等結束，讀取端要接受 pid 為 null。",
+   "acceptance": [
+    "config.json 的 dispatch 物件新增可選鍵 window，值為 \"console\"（預設，缺鍵或 null 視同 console）或 \"orca\"；其餘值印警告並視同 console。window 為 console 時，dispatch.py 的所有行為（含 started 記錄形狀）與本 feature 之前逐位元相同。",
+    "window 為 orca 且 --watch 時，每個專案不再用 CREATE_NEW_CONSOLE 開視窗，而是執行 orca terminal create --json，--command 為 claude 加既有 opener 句（prompt 檔仍照現行寫在 ~/.agent-brief/prompts/<cwd 目錄名>.md）與 claude_args() 的旗標，--title 為專案名。--worktree 由該專案在 config.projects[] 的可選 orca 物件決定：{\"mode\":\"repo\"} 或缺鍵 → path:<專案 path>；{\"mode\":\"bind\",\"repo_id\":\"<Orca repo id>\"} → id:<repo_id>::<該 repo 的 path>（path 由 orca repo list --json 依 id 查得），且 --command 前綴 cd 進專案 path。bind 的 repo_id 在 orca repo list 中不存在時該專案退回 console 視窗並印出原因。",
+    "repo 模式下 selector 回 selector_not_found 時，先執行 orca repo add --path <專案 path> --json 再重試一次 terminal create；仍失敗則該專案退回 console 視窗並印出原因，其餘專案照常。",
+    "window 為 orca 且本次為 --watch 派工時，派工前先 orca status --json；Orca 未在跑（指令失敗或 ok 為 false）時整批退回 console 視窗並印一行說明，不呼叫 orca open（無人看管時不得啟動 GUI）。window 為 orca 但本次為 headless（-p）派工時完全不呼叫 orca。",
+    "orca 模式的 started 記錄 pid 為 null 並新增 terminal 欄位（orca 回的 term_ handle）；docs/schema.md 的 dispatches.jsonl 段落記載此形狀，並寫明 pid 為 null 的 started 記錄在讀取端視同存活（只由 finished 行或 F15 的 report 規則結束）。brief_me.py 與 dispatch.py 所有讀 pid 的位置（running 推導、sessions_view 的 running 列、F24 requeue 條件 (b)、refill 的 already_running 判定）對 pid 為 null 不得拋例外（含 TypeError）且依上述規則判定；sessions 列的 pid 欄位對 orca 記錄輸出 null。",
+    "waiter（dispatch.py --wait）對帶 terminal 的 started 記錄改以 orca terminal wait --terminal <handle> --for exit 等待，該分頁程式結束後照既有格式寫 finished 行，exit_codes 取 orca 回的 exitCode（取不到記 null）。同一批混有 pid 與 terminal 兩種記錄時兩者都要等完才寫 finished；exit_codes 必須與該 batch 的 started 記錄寫入順序逐位對齊（brief_me.py 依 index 配對），terminal 記錄取不到 exitCode 時該位置寫 null。",
+    "測試（stdlib unittest，BRIEF_HOME 暫存目錄，orca 指令以 PATH 上的假 orca 腳本替身，不依賴真 Orca）至少涵蓋：window 缺鍵／console 時不呼叫 orca 且 started 記錄含 pid；orca 模式下 terminal create 的 argv 含正確 --worktree、--title 與 opener；selector_not_found 觸發 repo add 後重試；bind 模式 argv 含 id:<repo_id>::<path> 與 cd 前綴、repo_id 不存在退回 console；orca status 失敗整批退回 console；pid 為 null 的 started 記錄在 /api/state 顯示 running 且不被 F24 requeue，收到 report 後結束；waiter 對 terminal 記錄寫出 finished 行；一批兩專案（第一個 terminal、第二個 pid）的 finished 行 exit_codes[0] 對應第一個 started 記錄；window=orca 且 --no-watch 時假 orca 一次都沒被呼叫。既有測試全綠。",
+    "新增與修改的對外檔案（scripts/、docs/、README）全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
+   ],
+   "touches": [
+    "scripts/dispatch.py",
+    "scripts/brief_me.py",
+    "docs/schema.md",
+    "tests/test_dispatch_batch.py",
+    "tests/test_brief_me_api.py"
+   ],
+   "signed_off": true
+  },
+  {
+   "id": "F35",
+   "name": "brief-init 問要不要用 Orca 並逐專案設定 worktree 模式；brief-me 派工前偵測 Orca 未開",
+   "status": "failing",
+   "rationale": "F34 的 config 鍵沒有入口就只能手改 JSON。init 是唯一的設定訪談；brief-me 是互動場，Orca 沒開時可以問人，dispatch.py 無人看管時不能。本條只管 CLI skill 兩端；Web UI Settings 的入口另開 F36。",
+   "prerequisites": [
+    "F34"
+   ],
+   "acceptance": [
+    "brief-init Step 3 在既有七題之前新增第 0 題：先執行 orca status --json 探測；orca 不在 PATH 或指令失敗 → 不問，dispatch.window 設 \"console\"，並印一行「Orca CLI not found, dispatch windows will use the system console」；探測成功 → 問「Open dispatch windows inside Orca?」，是 → \"orca\"，否 → \"console\"。重跑 init 時以現值為預設選項。",
+    "window 選 orca 時，先執行 orca repo list --json，再對 config.projects[] 每個專案問一題「How should <name> open in Orca?」，選項 \"Own repo\"（寫 orca:{mode:\"repo\"}，並立即執行 orca repo add --path <path> --json，失敗一律忽略、只印一行警告）與每一個祖先工作區各一個選項 \"Under <displayName>\"（寫 orca:{mode:\"bind\",\"repo_id\":<id>}）；沒有祖先工作區時只剩 Own repo 一個選項就不問、直接寫 repo。重跑時已有 orca 物件的專案以現值為預設。window 為 console 時不問這段，且不刪除專案既有的 orca 物件。 「祖先工作區」定義：對 orca repo list 的每個 path 與專案 path 各做 os.path.normcase(os.path.abspath())，以路徑分量比對，repo path 是專案 path 的嚴格前綴（不含相等）才算祖先；相等（專案自己被 repo add 之後）與大小寫、尾斜線差異依此規則判定。",
+    "brief-me Step 4 在呼叫 dispatch.py 之前：讀 config；當本次派工會帶 --watch（$ARGUMENTS 含 --watch，或未指定且 config.dispatch.watch 為 true）且 dispatch.window 為 orca 時，先執行 orca status --json；其他情況不探測、不多問。探測失敗則用 AskUserQuestion 問「Orca is not running」三選一：\"Open Orca\"（執行 orca open --json；回 ok 後直接派工，不再 poll；orca open 失敗則再發一次 AskUserQuestion，只留 \"Use console windows for this batch\" 與 \"Cancel dispatch\"）、\"Use console windows for this batch\"（派工時加 --no-orca 旗標）、\"Cancel dispatch\"。",
+    "dispatch.py 接受 --no-orca 旗標：本次派工一律走 console 路徑，不改 config。docs/schema.md 記載 window、projects[].orca（{mode:\"repo\"} 或 {mode:\"bind\", repo_id}）與 --no-orca 旗標的語意。",
+    "測試：tests/ 對 --no-orca 覆寫加至少一條 unittest；brief-init 與 brief-me 兩份 SKILL.md 的新增段落由使用者本人各走一次，結果寫入 docs/evidence/F35.md，至少記錄：init 第 0 題實際出現的選項與所選值、每個專案實際列出的選項清單、一次 headless（window=orca、watch=false）的 brief-me 派工確認完全沒被問、一次 orca open 失敗情境的實跑結果、--no-orca 那批的視窗實際開在哪。",
+    "新增與修改的對外檔案（skills/、docs/、README）全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
+   ],
+   "touches": [
+    "skills/brief-init/SKILL.md",
+    "skills/brief-me/SKILL.md",
+    "scripts/dispatch.py",
+    "docs/schema.md",
+    "tests/test_dispatch_batch.py",
+    "README.md",
+    "docs/evidence/F35.md"
+   ],
+   "signed_off": true
+  },
+  {
+   "id": "F36",
+   "name": "Web UI Settings 頁可設定 Orca 派工視窗（dispatch.window）與逐專案 worktree 模式",
+   "status": "failing",
+   "rationale": "F34 的 window 鍵與 projects[].orca 物件原本只在 brief-init 訪談有入口；Ryan 已實際在用 Settings 頁改 context_language 等設定（F30 首日即使用），設定散在兩處會漂移。Web 派工帶 --watch 走同一 spawn 路徑，所以設定頁不顯示這個開關反而讓 Web 使用者看不出視窗會開在哪。視覺參考（非驗收依據）：https://claude.ai/code/artifact/708592b3-143f-480a-8cfd-210d1aac65d2（三畫板：桌機、手機、欄位兩狀態）。取捨：projects[].orca 是 F30 白名單外的 projects 陣列裡的子物件，只開放 orca 子物件寫入，name／path 仍唯讀——name 與 path 決定 cwd，不能從無認證 API 改。 bind 的目標改為下拉（只列 Orca 已登記且路徑為專案祖先的工作區，存 repo id），不開放自由輸入 selector——少一個輸入框、一條 regex、一個錯誤狀態，且不會打錯字（2026-09-01 Ryan 決定）。",
+   "prerequisites": [
+    "F34"
+   ],
+   "acceptance": [
+    "Settings 頁 Dispatch settings 卡在「Workers may delegate to subagents」之後、Save settings 之前新增 .settings-field：settings-label 文字 \"Dispatch windows (--watch)\"；下方一個 .settings-row 內有 select（class other-input，選項 \"Orca tab\"＝orca、\"System console\"＝console）與一個 .badge 狀態 badge；再下方一行 .field-note（12px、--text-muted）：\"Applies to every --watch dispatch, from this page or the CLI. Headless (-p) sessions never open a window.\"。沿用既有 .settings-field／.settings-row／.other-input 樣式，不新增顏色值，只用既有 CSS 變數。",
+    "GET /api/state 回應新增 orca: {\"available\": bool, \"running\": bool, \"version\": str|null, \"repos\": [{\"id\", \"displayName\", \"path\"}]}，由伺服器執行 orca status --json 與 orca repo list --json 推導（orca 不在 PATH → available false、repos 空；status 失敗或 ok 為 false → running false、repos 空）；前端切換到 Settings 視圖時呼叫 reloadState() 重新取得，不用快取。badge 三態：available 且 running → 文字 \"Orca running - v<version>\"，樣式 background var(--accent-bg)、color var(--accent)；available 但未 running → 文字 \"Orca not running\"，background rgba(210,153,34,0.14)、color var(--warning)，並多一行 .field-note 用 color var(--warning)：\"The next --watch dispatch falls back to console windows until Orca is open. Setting is kept.\"；available 為 false → 文字 \"Orca CLI not found\"，預設 .badge 樣式，select 停用（opacity 0.5、cursor not-allowed）並固定顯示 System console，note 文字 \"Install Orca and register its CLI (Settings, General, Orca CLI) to open dispatch windows as Orca tabs. Saved value stays console.\"。",
+    "select 為 orca 時，欄位下方顯示 .orca-projects 區塊：桌機兩欄 grid，config.projects[] 每個專案一張小卡（--bg 底、1px --border 邊框、6px 圓角、12px 內距），卡內上方是專案名稱（粗體、單行截斷），下方一列帶可見標籤 \"Open as\" 的下拉（<label for>），選項為 \"Own repo\"（={mode:\"repo\"}）加上每一個祖先工作區（來源為同一回應的 orca.repos）各一個 \"Under <displayName>\"（={mode:\"bind\", repo_id:<id>}）；沒有祖先工作區時只剩 Own repo；缺 orca 物件視為 Own repo。既有 orca 物件的 repo_id 不在 repos 裡時，該卡的下拉多一個停用選項 \"Under (unregistered)\" 被選中，卡內附警告色 note 提示重新選擇。區塊下方一行 note 說明 Own repo 會在儲存時 orca repo add、Under 會在該工作區內開分頁並 cd 進專案。Save settings 只送出本次被使用者改動過的卡；未改動的 unregistered 卡不送出、不觸發 400，其 config 值原樣保留。select 為 console 時整個區塊隱藏，但既有的 orca 物件不被清除。 「祖先工作區」定義：對 orca repo list 的每個 path 與專案 path 各做 os.path.normcase(os.path.abspath())，以路徑分量比對，repo path 是專案 path 的嚴格前綴（不含相等）才算祖先；相等（專案自己被 repo add 之後）與大小寫、尾斜線差異依此規則判定。",
+    "POST /api/config 的白名單擴充：dispatch.window 接受 \"orca\"／\"console\"；新增頂層鍵 projects，值為 [{\"name\": str, \"orca\": {\"mode\": \"repo\"} | {\"mode\": \"bind\", \"repo_id\": str}}]，伺服器只依 name 比對既有專案並覆寫其 orca 子物件。以下每一項 → 400 且 config.json 不被寫入：(a) projects 非陣列；(b) 元素含 name／orca 以外的鍵；(c) name 不存在於 config.projects；(d) orca 非物件；(e) mode 不是 \"repo\"／\"bind\"；(f) mode 為 bind 而 repo_id 缺或非字串；(g) mode 為 bind 而 repo_id 不在當下 orca repo list 中。錯誤訊息前端以 toast-error 顯示。整個請求先驗證完才寫入；其餘 F30 唯讀規則不變。",
+    "儲存成功且 window 為 orca 時，伺服器對每個 mode 為 repo 的專案執行 orca repo add --path <path> --json，已登記或失敗都不阻擋儲存，只在回應的 warnings 陣列回報，前端以既有 toast-warning 顯示。orca 未 running 時跳過 repo add 並回一則 warning。",
+    "手機（≤768px）：.orca-projects 改單欄 grid、Open as 下拉寬度佔滿卡寬、select 與按鈕 min-height 44px；覆寫放在檔尾的 media block（F21 的順序規則）。",
+    "測試：tests/test_brief_me_api.py 對 /api/state 的 orca 欄位（以 PATH 假 orca 腳本替身三態，含 repos 列表）、POST /api/config 的 window 與 projects[].orca 合法情境、第 4 條 (a)–(g) 每一項各一條並斷言 config.json 未變、repo add 的 warnings 至少一條；tests/test_brief_me_html.py Playwright 場景至少涵蓋：三態 badge 文字與樣式、選 Orca tab 出現每專案一張卡、卡內 Open as 列出祖先工作區的 Under 選項而不列非祖先、repos 含專案自身路徑時不產生 Under 選項、無祖先時只有 Own repo、存在一張 unregistered 卡時只改另一張卡並 Save 成功（200）且 unregistered 專案的 config 值不變、改兩張卡後儲存送出正確 projects 陣列、選 console 區塊隱藏。既有測試全綠。",
+    "docs/schema.md 的 config 段落記載 projects[].orca 與 window 的 Web 可寫規則；本次 diff 內對外檔案全英文、無作者私人路徑或 repo 名（依 F6 的 grep 檢查）。"
+   ],
+   "touches": [
+    "scripts/brief_me.py",
+    "scripts/brief_me.html",
+    "docs/schema.md",
+    "tests/test_brief_me_api.py",
+    "tests/test_brief_me_html.py"
+   ],
+   "signed_off": true
+  }
+ ]
 }

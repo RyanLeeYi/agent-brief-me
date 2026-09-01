@@ -391,6 +391,26 @@ def _write_fake_orca(directory):
     return wrapper_path
 
 
+class RunOrcaNoWindowTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import dispatch  # noqa: E402
+
+        self.dispatch = dispatch
+
+    def test_run_orca_passes_create_no_window_flag(self):
+        dispatch = self.dispatch
+        seen = {}
+
+        def fake_run(argv, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess(argv, 0, stdout='{"ok": true}', stderr="")
+
+        with mock.patch.object(dispatch.subprocess, "run", fake_run):
+            self.assertEqual(dispatch.run_orca(["status"]), {"ok": True})
+        self.assertEqual(seen.get("creationflags"), getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
 class OrcaWindowTests(unittest.TestCase):
     """F34: dispatch.window: "orca" opens --watch sessions in an Orca
     terminal tab (`orca terminal create`) instead of a native console

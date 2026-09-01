@@ -470,6 +470,15 @@ def spawn_watch(claude_cmd: str, cwd: str, prompt: str, args: list[str]) -> subp
 # Orca binding question (skills/brief-init/SKILL.md), not by dispatch.py's
 # own runtime path.
 
+# Callers of run_orca often have no console of their own (the detached
+# --wait waiter, the Web UI server): on Windows, launching a console program
+# from such a parent makes the OS allocate a brand-new visible console
+# window for it - a blocking `orca terminal wait` then sits in a cmd window
+# for the whole session (observed 2026-09-01). CREATE_NO_WINDOW suppresses
+# that; it is 0 (a no-op) elsewhere.
+ORCA_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def run_orca(args: list[str]) -> dict[str, Any]:
     """Run `orca <args...> --json` and parse its JSON stdout. Resolved via
     shutil.which (not a bare "orca" argv[0]) because Windows CreateProcess
@@ -481,7 +490,8 @@ def run_orca(args: list[str]) -> dict[str, Any]:
     responses use, so callers only ever check `.get("ok")`."""
     cmd = shutil.which("orca") or "orca"
     try:
-        result = subprocess.run([cmd, *args, "--json"], capture_output=True, text=True)
+        result = subprocess.run([cmd, *args, "--json"], capture_output=True, text=True,
+                                creationflags=ORCA_CREATION_FLAGS)
     except OSError as exc:
         return {"ok": False, "error": str(exc)}
     try:

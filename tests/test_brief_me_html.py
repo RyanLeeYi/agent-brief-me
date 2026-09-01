@@ -48,6 +48,11 @@ def append_line(path, record):
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def write_json(path, obj):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+
+
 def make_question(project, title, choices, severity="normal", recommendation=None, multi=None, session_id=None):
     q = {
         "type": "question", "id": str(uuid.uuid4()), "project": project,
@@ -615,6 +620,123 @@ def run_scenes(page, base_url, brief_home, fx):
     page.set_viewport_size(original_viewport)
     os.remove(os.path.join(brief_home, "sessions.json"))
     print("scene: mobile layout (390px) - sessions table and report card fit without horizontal overflow - OK")
+
+    # ---- F36: Settings "Dispatch windows (--watch)" + per-project Orca cards ----
+    ancestor_project = "proj-with-ancestor"
+    ancestor_project_2 = "proj-with-ancestor-2"
+    no_ancestor_project = "proj-no-ancestor"
+    self_registered_project = "proj-self-registered"
+    unregistered_project = "proj-unregistered"
+
+    write_json(os.path.join(brief_home, "config.json"), {"projects": [
+        {"name": PROJECT, "path": "/tmp/does-not-matter"},
+        {"name": ancestor_project, "path": "/repos/root/sub/proj-with-ancestor"},
+        {"name": ancestor_project_2, "path": "/repos/root/sub2/proj-with-ancestor-2"},
+        {"name": no_ancestor_project, "path": "/isolated/proj-no-ancestor"},
+        {"name": self_registered_project, "path": "/repos/self/proj-self-registered"},
+        {"name": unregistered_project, "path": "/repos/orphan/proj-unregistered",
+         "orca": {"mode": "bind", "repo_id": "repo-gone"}},
+    ]})
+    orca_repos = [
+        {"id": "repo-root", "displayName": "RootRepo", "path": "/repos/root"},
+        {"id": "repo-self", "displayName": "SelfRepo", "path": "/repos/self/proj-self-registered"},
+        {"id": "repo-other", "displayName": "OtherRepo", "path": "/somewhere/else"},
+    ]
+    orca_project_ancestors = {
+        PROJECT: [], ancestor_project: ["repo-root"], ancestor_project_2: ["repo-root"],
+        no_ancestor_project: [], self_registered_project: [], unregistered_project: [],
+    }
+    orca_json_path = os.path.join(brief_home, "orca.json")
+
+    def open_settings():
+        page.locator("#settings-entry").click()
+        expect(page.locator("#settings-view")).to_be_visible()
+
+    # -- badge state 1/3: orca CLI not on PATH --------------------------------
+    write_json(orca_json_path, {"available": False, "running": False, "version": None,
+                                "repos": [], "project_ancestors": {}})
+    open_settings()
+    expect(page.locator("#settings-window-badge")).to_have_text("Orca CLI not found")
+    expect(page.locator("#settings-window-badge")).to_have_class("badge")
+    expect(page.locator("#settings-window")).to_be_disabled()
+    expect(page.locator("#settings-window")).to_have_value("console")
+    expect(page.locator("#settings-window-note")).to_contain_text("Install Orca")
+    expect(page.locator("#settings-orca-projects")).to_be_hidden()
+    print("scene: F36 badge state - Orca CLI not found (select disabled, forced console) - OK")
+
+    # -- badge state 2/3: available but not running ---------------------------
+    write_json(orca_json_path, {"available": True, "running": False, "version": None,
+                                "repos": orca_repos, "project_ancestors": orca_project_ancestors})
+    open_settings()
+    expect(page.locator("#settings-window-badge")).to_have_text("Orca not running")
+    expect(page.locator("#settings-window-badge")).to_have_class("badge badge-orca-off")
+    expect(page.locator("#settings-window")).to_be_enabled()
+    expect(page.locator("#settings-window-warn-note")).to_be_visible()
+    expect(page.locator("#settings-window-warn-note")).to_contain_text("falls back to console windows")
+    print("scene: F36 badge state - Orca not running (warning note shown) - OK")
+
+    # -- badge state 3/3: running, with a version ------------------------------
+    write_json(orca_json_path, {"available": True, "running": True, "version": "2.0.1",
+                                "repos": orca_repos, "project_ancestors": orca_project_ancestors})
+    open_settings()
+    expect(page.locator("#settings-window-badge")).to_have_text("Orca running - v2.0.1")
+    expect(page.locator("#settings-window-badge")).to_have_class("badge badge-orca-on")
+    expect(page.locator("#settings-window-warn-note")).to_be_hidden()
+    print("scene: F36 badge state - Orca running (version in badge) - OK")
+
+    # -- select "Orca tab": one card per project, ancestor-filtered dropdowns -
+    page.locator("#settings-window").select_option("orca")
+    expect(page.locator("#settings-orca-projects")).to_be_visible()
+    expect(page.locator(".orca-project-card")).to_have_count(6)
+
+    def option_texts(project):
+        return page.locator(f'.orca-open-as[data-project="{project}"] option').all_text_contents()
+
+    expect(page.locator(f'.orca-open-as[data-project="{ancestor_project}"]')).to_have_value("repo")
+    assert option_texts(ancestor_project) == ["Own repo", "Under RootRepo"], option_texts(ancestor_project)
+
+    # repos containing the project's own path must not produce an Under option.
+    assert option_texts(self_registered_project) == ["Own repo"], option_texts(self_registered_project)
+
+    # no ancestor at all -> Own repo only.
+    assert option_texts(no_ancestor_project) == ["Own repo"], option_texts(no_ancestor_project)
+
+    # existing bind repo_id absent from repos -> disabled "Under (unregistered)", selected, warned.
+    unreg_select = page.locator(f'.orca-open-as[data-project="{unregistered_project}"]')
+    assert option_texts(unregistered_project) == ["Own repo", "Under (unregistered)"], option_texts(unregistered_project)
+    expect(unreg_select).to_have_value("bind:repo-gone")
+    unreg_option = page.locator(f'.orca-open-as[data-project="{unregistered_project}"] option[value="bind:repo-gone"]')
+    expect(unreg_option).to_be_disabled()
+    unreg_card = page.locator(".orca-project-card", has=unreg_select)
+    expect(unreg_card.locator(".field-note-warning")).to_be_visible()
+    print("scene: F36 per-project cards - ancestor filtering, self-path exclusion, unregistered warning - OK")
+
+    # -- only touched cards are sent; an untouched unregistered card survives Save
+    page.locator(f'.orca-open-as[data-project="{ancestor_project}"]').select_option("bind:repo-root")
+    page.locator(f'.orca-open-as[data-project="{ancestor_project_2}"]').select_option("bind:repo-root")
+    _stub_api.last_config_patch = None
+    page.locator("#settings-save-btn").click()
+    expect(page.locator(".toast")).to_contain_text("Settings saved.")
+
+    sent_projects = {p["name"]: p["orca"] for p in _stub_api.last_config_patch["projects"]}
+    assert set(sent_projects) == {ancestor_project, ancestor_project_2}, sent_projects
+    assert sent_projects[ancestor_project] == {"mode": "bind", "repo_id": "repo-root"}, sent_projects
+    assert sent_projects[ancestor_project_2] == {"mode": "bind", "repo_id": "repo-root"}, sent_projects
+
+    with open(os.path.join(brief_home, "config.json"), encoding="utf-8") as f:
+        saved_config = json.load(f)
+    saved_by_name = {p["name"]: p for p in saved_config["projects"]}
+    assert saved_by_name[unregistered_project]["orca"] == {"mode": "bind", "repo_id": "repo-gone"}, \
+        "an untouched unregistered card must not be rewritten on Save"
+    assert saved_by_name[ancestor_project]["orca"] == {"mode": "bind", "repo_id": "repo-root"}
+    print("scene: F36 Save sends only touched cards; untouched unregistered project's config is unchanged - OK")
+
+    # -- selecting console hides the whole section -----------------------------
+    page.locator("#settings-window").select_option("console")
+    expect(page.locator("#settings-orca-projects")).to_be_hidden()
+    print("scene: F36 selecting console hides .orca-projects - OK")
+
+    os.remove(orca_json_path)
 
 
 if __name__ == "__main__":

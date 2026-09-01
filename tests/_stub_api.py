@@ -8,6 +8,15 @@ Dispatch is faked (no real subprocess.run of dispatch.py): every project in
 the request is reported as dispatched, with a fake log path per project when
 not watching. The last dispatch call's {projects, watch} is recorded on
 `last_dispatch` for assertions from the same Python process.
+
+F36 adds GET/POST /api/config (config.json read/write, unvalidated - a real
+`orca` CLI subprocess is not available to a UI test, so POST here just merges
+`dispatch`/`projects` the same way the real server's _apply_config_patch does,
+without the real server's 400 validation, and always reports empty
+`warnings`) and `orca` in build_state(), read verbatim from BRIEF_HOME/
+orca.json when present - the same test-seam pattern as _running()/_sessions()
+below, since the real server derives it from live `orca` CLI calls a UI test
+cannot stage.
 """
 import json
 import os
@@ -21,6 +30,7 @@ HTML_PATH = os.path.join(REPO_ROOT, "scripts", "brief_me.html")
 
 # Recorded here (not over HTTP) so the test process can assert on it directly.
 last_dispatch = None
+last_config_patch = None  # F36: the last POST /api/config request body
 
 
 def _now():
@@ -114,13 +124,28 @@ def _r_view(r):
     return v
 
 
-def _config_projects(brief_home):
+def _load_config(brief_home):
     path = os.path.join(brief_home, "config.json")
     if not os.path.exists(path):
-        return []
+        return {}
     with open(path, "r", encoding="utf-8") as f:
-        config = json.load(f)
-    return [p["name"] for p in config.get("projects", [])]
+        return json.load(f)
+
+
+def _config_projects(brief_home):
+    return [p["name"] for p in _load_config(brief_home).get("projects", [])]
+
+
+def _orca(brief_home):
+    """F36 test seam: the full `orca` object read verbatim from
+    BRIEF_HOME/orca.json when present (same seam pattern as _running/
+    _sessions - the real server derives this from live `orca` CLI calls,
+    which a UI test cannot stage)."""
+    path = os.path.join(brief_home, "orca.json")
+    if not os.path.exists(path):
+        return {"available": False, "running": False, "version": None, "repos": [], "project_ancestors": {}}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def build_state(brief_home):
@@ -159,6 +184,7 @@ def build_state(brief_home):
         "dismissed": dismissed_grouped,
         "running": _running(brief_home),
         "sessions": _sessions(brief_home),
+        "orca": _orca(brief_home),
     }, questions, reports
 
 
@@ -221,6 +247,9 @@ class Handler(BaseHTTPRequestHandler):
             state, _, _ = build_state(_brief_home())
             self._send_json(200, state)
             return
+        if self.path == "/api/config":
+            self._send_json(200, _load_config(_brief_home()))
+            return
         self._send_json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -275,7 +304,31 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_answer(body, brief_home, inbox_path, answers_path)
             return
 
+        if self.path == "/api/config":
+            self._handle_config(body, brief_home)
+            return
+
         self._send_json(404, {"ok": False, "error": "not found"})
+
+    def _handle_config(self, body, brief_home):
+        """F36: merges body["dispatch"]/body["projects"] into config.json the
+        same way the real server's _apply_config_patch does, minus its 400
+        validation (no real orca CLI here to check a bind repo_id against -
+        see this module's docstring). `warnings` is always empty."""
+        config = _load_config(brief_home)
+        config["dispatch"] = {**(config.get("dispatch") or {}), **(body.get("dispatch") or {})}
+        projects_patch = body.get("projects")
+        if projects_patch:
+            orca_by_name = {e["name"]: e["orca"] for e in projects_patch}
+            config["projects"] = [
+                {**p, "orca": orca_by_name[p["name"]]} if p.get("name") in orca_by_name else p
+                for p in config.get("projects", [])
+            ]
+        global last_config_patch
+        last_config_patch = body
+        with open(os.path.join(brief_home, "config.json"), "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False)
+        self._send_json(200, {"ok": True, "config": config, "warnings": []})
 
     def _folded(self, brief_home):
         questions, reports, _, _, _ = _fold(brief_home)

@@ -281,6 +281,45 @@ batch's `started` records in write order (a terminal record whose
 `exitCode` orca does not report gets `null`, the same sentinel used for an
 undeterminable pid exit code).
 
+#### Web UI: orca status + writable `window`/`projects[].orca` (F36)
+
+`GET /api/state` adds an `orca` object, derived server-side from `orca
+status --json` and `orca repo list --json` (never cached; the Web UI's
+Settings view re-fetches it on every view switch): `{"available": bool,
+"running": bool, "version": str|null, "repos": [{"id", "displayName",
+"path"}]}`. `available` is false only when the `orca` CLI itself is not on
+PATH; `running` is false whenever the status call fails or returns `ok:
+false`, in which case `repos` is `[]` (the repo list call is skipped). The
+response also carries `project_ancestors: {project_name: [repo_id, ...]}` -
+not part of the CLI-derived shape above, but the server-side result of
+running every `repos[].path` through `dispatch.is_ancestor_workspace()`
+against each project's `path` (strict path-component prefix, not equal;
+see `is_ancestor_workspace()`'s own docstring), for the Settings view's
+per-project "Open as" dropdown.
+
+`POST /api/config`'s F30 whitelist gains `dispatch.window` (`"orca"` or
+`"console"`, same field `dispatch.py` reads for a `--watch` dispatch) and a
+top-level `projects` key: `[{"name": str, "orca": {"mode": "repo"} |
+{"mode": "bind", "repo_id": str}}]`. Each entry patches only the named
+project's existing `orca` sub-object (matched by `name`, which must already
+exist in `config.json`'s `projects[]`); every other project, and every
+field of a patched project besides `orca`, is left untouched. A `bind`
+entry's `repo_id` is checked against a live `orca repo list --json` call at
+save time (not any client-cached copy) and rejected with a 400 - along with
+a non-array `projects`, an entry with keys other than `name`/`orca`, an
+unknown project `name`, a non-object `orca`, or a `mode` other than
+`"repo"`/`"bind"` - before any write happens, same all-or-nothing discipline
+as the rest of F30's validation.
+
+When a save leaves `dispatch.window == "orca"`, the server also runs `orca
+repo add --path <path> --json` for every project whose (possibly
+just-saved) `orca` mode is `"repo"` (the default) - registering it as its
+own Orca repo, so a later `--watch` dispatch can open a terminal for it. A
+`bind`-mode project is skipped (it already resolves through another
+project's registered repo). This never blocks the save that already
+happened: Orca not running, or any one project's `repo add` failing, only
+adds a line to the response's `warnings` array.
+
 ### Context-refill dispatch (F28)
 
 `scripts/dispatch.py --refill <question_id>` (also reachable from the Web

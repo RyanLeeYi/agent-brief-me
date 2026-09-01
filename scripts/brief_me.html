@@ -340,6 +340,21 @@
     font-size:13px; word-break:break-word;
   }
 
+  /* ---------- dispatch window / Orca (F36) ---------- */
+  .field-note{ font-size:12px; color:var(--text-muted); margin:8px 0 0; }
+  .field-note-warning{ color:var(--warning); }
+  .settings-row select:disabled{ opacity:0.5; cursor:not-allowed; }
+  .badge-orca-on{ background:var(--accent-bg); color:var(--accent); }
+  .badge-orca-off{ background:rgba(210,153,34,0.14); color:var(--warning); }
+  .orca-projects{ display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; margin-top:12px; }
+  .orca-project-card{ background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px; }
+  .orca-project-name{
+    font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:8px;
+  }
+  .orca-open-as-row{ display:flex; align-items:center; gap:8px; }
+  .orca-open-as-row label{ font-size:12px; color:var(--text-muted); flex:0 0 auto; }
+  .orca-open-as{ flex:1; min-width:0; }
+
   /* ---------- toast ---------- */
   #toast-container{ position:fixed; right:24px; bottom:24px; display:flex; flex-direction:column; gap:8px; z-index:1000; }
   .toast{
@@ -411,6 +426,11 @@
     .report-summary-row .feature-chip{ order:5; }
     .report-summary-row .report-summary-first-line{ order:6; }
     .report-summary-row .chevron{ order:7; }
+
+    /* F36: Orca per-project cards - single column, full-width tap target. */
+    .orca-projects{ grid-template-columns:1fr; }
+    .orca-open-as-row{ flex-wrap:wrap; }
+    .orca-open-as{ flex-basis:100%; min-height:44px; }
   }
 </style>
 </head>
@@ -541,6 +561,25 @@
               <span>Workers may delegate to subagents</span>
             </label>
           </div>
+          <div class="settings-field">
+            <label class="settings-label">Dispatch windows (--watch)</label>
+            <div class="settings-row">
+              <select id="settings-window" class="other-input">
+                <option value="orca">Orca tab</option>
+                <option value="console">System console</option>
+              </select>
+              <span class="badge" id="settings-window-badge"></span>
+            </div>
+            <p class="field-note" id="settings-window-note"></p>
+            <p class="field-note field-note-warning" id="settings-window-warn-note" hidden>
+              The next --watch dispatch falls back to console windows until Orca is open. Setting is kept.
+            </p>
+            <div class="orca-projects" id="settings-orca-projects" hidden></div>
+            <p class="field-note" id="settings-orca-projects-note" hidden>
+              Own repo registers this project with Orca on save (orca repo add). Under opens a tab in
+              that workspace and cd's into this project.
+            </p>
+          </div>
           <button type="button" class="btn btn-primary" id="settings-save-btn">Save settings</button>
         </div>
 
@@ -626,6 +665,12 @@
   var settingsKeepTermsEl = document.getElementById('settings-keep-terms');
   var settingsPlainLanguageEl = document.getElementById('settings-plain-language');
   var settingsDelegateEl = document.getElementById('settings-delegate');
+  var settingsWindowEl = document.getElementById('settings-window');
+  var settingsWindowBadgeEl = document.getElementById('settings-window-badge');
+  var settingsWindowNoteEl = document.getElementById('settings-window-note');
+  var settingsWindowWarnNoteEl = document.getElementById('settings-window-warn-note');
+  var settingsOrcaProjectsEl = document.getElementById('settings-orca-projects');
+  var settingsOrcaProjectsNoteEl = document.getElementById('settings-orca-projects-note');
   var settingsSaveBtnEl = document.getElementById('settings-save-btn');
   var settingsReadonlyListEl = document.getElementById('settings-readonly-list');
 
@@ -648,13 +693,19 @@
 
   // F30: config.json's current value, loaded fresh every time Settings is opened.
   var settingsState = { config: null };
+  // F36: project names whose "Open as" dropdown the user has changed this
+  // Settings-view visit - only these are sent in POST /api/config's
+  // `projects` array; reset whenever config is reloaded (view entry, or
+  // right after a successful save).
+  var orcaDirty = {};
 
   function emptyState() {
     return {
       collector_warning: null, unread_reports: {}, pending_questions: {},
       refilling_questions: {},
       unconsumed_projects: [], projects: [], unconsumed_counts: {}, dismissed: {}, running: {},
-      sessions: { running: [], finished: [], finished_hidden: 0 }
+      sessions: { running: [], finished: [], finished_hidden: 0 },
+      orca: { available: false, running: false, version: null, repos: [], project_ancestors: {} }
     };
   }
 
@@ -1683,10 +1734,94 @@
   function loadSettings() {
     return apiGet('/api/config').then(function (config) {
       settingsState.config = config;
+      orcaDirty = {};
       renderSettingsView();
     }).catch(function (err) {
       toast('Failed to load settings: ' + err.message, 'error');
     });
+  }
+
+  // F36: badge text/class for the three orca states (unavailable / available
+  // but not running / running).
+  function renderOrcaBadge(orca) {
+    var text, extraClass;
+    if (!orca.available) {
+      text = 'Orca CLI not found';
+      extraClass = '';
+    } else if (orca.running) {
+      text = 'Orca running - v' + (orca.version != null ? orca.version : '?');
+      extraClass = ' badge-orca-on';
+    } else {
+      text = 'Orca not running';
+      extraClass = ' badge-orca-off';
+    }
+    settingsWindowBadgeEl.className = 'badge' + extraClass;
+    settingsWindowBadgeEl.textContent = text;
+  }
+
+  // F36: one .orca-project-card per config.projects[] entry, with an "Open
+  // as" dropdown built from the project's ancestor Orca repos (orca.repos
+  // filtered by orca.project_ancestors[name] - both computed server-side via
+  // dispatch.is_ancestor_workspace, never reimplemented here).
+  function renderOrcaProjects(orca) {
+    var projects = (settingsState.config && settingsState.config.projects) || [];
+    var reposById = {};
+    (orca.repos || []).forEach(function (r) { reposById[r.id] = r; });
+    var ancestorsByProject = orca.project_ancestors || {};
+
+    settingsOrcaProjectsEl.innerHTML = projects.map(function (p, i) {
+      var orcaCfg = (p.orca && typeof p.orca === 'object') ? p.orca : { mode: 'repo' };
+      var mode = orcaCfg.mode === 'bind' ? 'bind' : 'repo';
+      var repoId = mode === 'bind' ? orcaCfg.repo_id : null;
+      var repoKnown = repoId != null && !!reposById[repoId];
+      var selId = 'orca-open-as-' + i;
+
+      var options = ['<option value="repo"' + (mode === 'repo' ? ' selected' : '') + '>Own repo</option>'];
+      (ancestorsByProject[p.name] || []).forEach(function (id) {
+        var repo = reposById[id];
+        if (!repo) return;
+        var selected = mode === 'bind' && repoId === id ? ' selected' : '';
+        options.push('<option value="bind:' + escapeHtml(id) + '"' + selected + '>Under ' +
+          escapeHtml(repo.displayName || id) + '</option>');
+      });
+      var warningNote = '';
+      if (mode === 'bind' && repoId != null && !repoKnown) {
+        options.push('<option value="bind:' + escapeHtml(repoId) + '" disabled selected>Under (unregistered)</option>');
+        warningNote = '<p class="field-note field-note-warning">' +
+          'This project\'s Orca repo is no longer registered with Orca. Choose another option.</p>';
+      }
+
+      return '<div class="orca-project-card">' +
+        '<div class="orca-project-name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="orca-open-as-row">' +
+          '<label for="' + selId + '">Open as</label>' +
+          '<select id="' + selId + '" class="other-input orca-open-as" data-project="' + escapeHtml(p.name) + '">' +
+            options.join('') +
+          '</select>' +
+        '</div>' +
+        warningNote +
+        '</div>';
+    }).join('');
+  }
+
+  function renderSettingsWindowField() {
+    var orca = (state.data && state.data.orca) ||
+      { available: false, running: false, version: null, repos: [], project_ancestors: {} };
+    var d = (settingsState.config && settingsState.config.dispatch) || {};
+
+    settingsWindowEl.disabled = !orca.available;
+    settingsWindowEl.value = orca.available && d.window === 'orca' ? 'orca' : 'console';
+
+    renderOrcaBadge(orca);
+    settingsWindowWarnNoteEl.hidden = !(orca.available && !orca.running);
+    settingsWindowNoteEl.textContent = orca.available
+      ? 'Applies to every --watch dispatch, from this page or the CLI. Headless (-p) sessions never open a window.'
+      : 'Install Orca and register its CLI (Settings, General, Orca CLI) to open dispatch windows as Orca tabs. Saved value stays console.';
+
+    renderOrcaProjects(orca);
+    var showProjects = settingsWindowEl.value === 'orca';
+    settingsOrcaProjectsEl.hidden = !showProjects;
+    settingsOrcaProjectsNoteEl.hidden = !showProjects;
   }
 
   function renderSettingsView() {
@@ -1730,6 +1865,8 @@
     settingsReadonlyListEl.innerHTML = readonlyRows.map(function (pair) {
       return '<dt>' + escapeHtml(pair[0]) + '</dt><dd>' + escapeHtml(pair[1]) + '</dd>';
     }).join('');
+
+    renderSettingsWindowField();
   }
 
   function currentContextLanguageValue() {
@@ -1743,17 +1880,37 @@
     return composeContextLanguage(settingsLanguageEl.value, settingsKeepTermsEl.checked);
   }
 
+  // F36: {name, orca} for every project the user touched this visit (only
+  // those are sent - an untouched, possibly-unregistered card must not be
+  // rewritten just because the batch save happened). Reads the live select
+  // value straight off the DOM rather than mirroring it in JS state.
+  function dirtyOrcaProjectPatches() {
+    var selects = settingsOrcaProjectsEl.querySelectorAll('.orca-open-as');
+    return Object.keys(orcaDirty).map(function (name) {
+      var sel = null;
+      selects.forEach(function (s) { if (s.dataset.project === name) sel = s; });
+      var raw = sel ? sel.value : 'repo';
+      var orca = raw.indexOf('bind:') === 0 ? { mode: 'bind', repo_id: raw.slice(5) } : { mode: 'repo' };
+      return { name: name, orca: orca };
+    });
+  }
+
   function handleSettingsSave() {
     var body = { dispatch: {
       model: settingsModelEl.value.trim() || null,
       context_model: settingsContextModelEl.value.trim() || null,
       delegate: settingsDelegateEl.checked,
       plain_language: settingsPlainLanguageEl.value,
-      context_language: currentContextLanguageValue()
+      context_language: currentContextLanguageValue(),
+      window: settingsWindowEl.value
     }};
+    var projectPatches = dirtyOrcaProjectPatches();
+    if (projectPatches.length) body.projects = projectPatches;
+
     settingsSaveBtnEl.disabled = true;
-    apiPost('/api/config', body).then(function () {
+    apiPost('/api/config', body).then(function (res) {
       toast('Settings saved.', 'info');
+      (res.warnings || []).forEach(function (w) { toast(w, 'warning'); });
       return loadSettings();
     }).catch(function (err) {
       toast('Save failed: ' + err.message, 'error');
@@ -1763,6 +1920,16 @@
   }
 
   settingsLanguageEl.addEventListener('change', updateKeepTermsEnabled);
+  settingsWindowEl.addEventListener('change', function () {
+    var showProjects = settingsWindowEl.value === 'orca';
+    settingsOrcaProjectsEl.hidden = !showProjects;
+    settingsOrcaProjectsNoteEl.hidden = !showProjects;
+  });
+  settingsOrcaProjectsEl.addEventListener('change', function (e) {
+    var sel = e.target.closest('.orca-open-as');
+    if (!sel) return;
+    orcaDirty[sel.dataset.project] = true;
+  });
   settingsSaveBtnEl.addEventListener('click', handleSettingsSave);
 
   // ------------------------------------------------------------- events ----
@@ -1804,6 +1971,7 @@
   settingsEntryEl.addEventListener('click', function () {
     state.view = 'settings';
     renderApp();
+    reloadState();  // F36: orca's available/running/version/repos is never cached
     loadSettings();
     if (isMobile()) closeDrawer();
   });

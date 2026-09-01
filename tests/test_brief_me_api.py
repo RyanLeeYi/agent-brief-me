@@ -22,6 +22,12 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 import brief_me  # noqa: E402
 
+# F36: reuses test_dispatch_batch.py's real subprocess stand-in for the orca
+# CLI (_write_fake_orca/FAKE_ORCA_PY) rather than a second copy - see
+# BriefMeOrcaAPITestCase below.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import test_dispatch_batch  # noqa: E402
+
 
 def _write_fake_claude(directory):
     """A stand-in for the real `claude` binary, for dispatch.py's
@@ -118,10 +124,12 @@ class BriefMeAPITestCase(unittest.TestCase):
         brief_me.atomic_append_line(self._inbox_path(), record)
         return record["id"]
 
-    def _write_config(self, projects=None, collector=None):
+    def _write_config(self, projects=None, collector=None, dispatch=None):
         config = {"projects": projects or []}
         if collector is not None:
             config["collector"] = collector
+        if dispatch is not None:
+            config["dispatch"] = dispatch
         with open(os.path.join(self.home, "config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f)
 
@@ -1072,6 +1080,231 @@ class BriefMeAPITestCase(unittest.TestCase):
         import dispatch  # noqa: E402
         reloaded = dispatch.load_config(self.home)
         self.assertEqual(dispatch.context_model_for(reloaded), "haiku")
+
+
+# -- F36: GET /api/state's `orca` field + POST /api/config's window/projects
+class BriefMeOrcaAPITestCase(BriefMeAPITestCase):
+    """Reuses test_dispatch_batch.py's real subprocess stand-in for the orca
+    CLI (_write_fake_orca/FAKE_ORCA_PY, reached via PATH, not a python-level
+    mock of dispatch.run_orca) rather than a second copy of it."""
+
+    def setUp(self):
+        super().setUp()
+        self.orca_dir = tempfile.mkdtemp(prefix="fake-orca-")
+        self.orca_log_path = os.path.join(self.orca_dir, "orca-calls.jsonl")
+        self.orca_config_path = os.path.join(self.orca_dir, "orca-config.json")
+        test_dispatch_batch._write_fake_orca(self.orca_dir)
+        os.environ["FAKE_ORCA_LOG"] = self.orca_log_path
+        os.environ["FAKE_ORCA_CONFIG"] = self.orca_config_path
+        os.environ["PATH"] = self.orca_dir + os.pathsep + os.environ.get("PATH", "")
+
+    def tearDown(self):
+        shutil.rmtree(self.orca_dir, ignore_errors=True)
+        super().tearDown()
+
+    def _set_orca_config(self, cfg):
+        with open(self.orca_config_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+
+    def _orca_log_entries(self):
+        if not os.path.exists(self.orca_log_path):
+            return []
+        with open(self.orca_log_path, encoding="utf-8") as f:
+            return [json.loads(l) for l in f if l.strip()]
+
+    def _config_raw(self):
+        with open(os.path.join(self.home, "config.json"), encoding="utf-8") as f:
+            return f.read()
+
+    # -- /api/state's orca: three states -----------------------------------
+    def test_orca_state_unavailable_when_cli_not_on_path(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        empty_path_dir = tempfile.mkdtemp(prefix="empty-path-")
+        self.addCleanup(shutil.rmtree, empty_path_dir, ignore_errors=True)
+        os.environ["PATH"] = empty_path_dir  # no orca anywhere on this PATH
+
+        _, data = self._get("/api/state")
+
+        orca = data["orca"]
+        self.assertEqual(orca, {"available": False, "running": False, "version": None,
+                                "repos": [], "project_ancestors": {"demo": []}})
+        self.assertEqual(self._orca_log_entries(), [])  # never even invoked
+
+    def test_orca_state_available_but_not_running(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        self._set_orca_config({"status": {"ok": False, "error": {"code": "not_running"}}})
+
+        _, data = self._get("/api/state")
+
+        orca = data["orca"]
+        self.assertTrue(orca["available"])
+        self.assertFalse(orca["running"])
+        self.assertIsNone(orca["version"])
+        self.assertEqual(orca["repos"], [])
+        # status-not-ok short-circuits before the repo list call (F36 acceptance).
+        self.assertEqual([e[:1] for e in self._orca_log_entries()], [["status"]])
+
+    def test_orca_state_running_with_version_and_repos(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        self._set_orca_config({
+            "status": {"ok": True, "result": {"app": {"running": True, "version": "1.4.2"}}},
+            "repo_list": {"ok": True, "result": {"repos": [
+                {"id": "repo-1", "displayName": "Repo One", "path": self.home},
+            ]}},
+        })
+
+        _, data = self._get("/api/state")
+
+        orca = data["orca"]
+        self.assertTrue(orca["available"])
+        self.assertTrue(orca["running"])
+        self.assertEqual(orca["version"], "1.4.2")
+        self.assertEqual(orca["repos"], [{"id": "repo-1", "displayName": "Repo One", "path": self.home}])
+
+    def test_orca_state_project_ancestors_uses_is_ancestor_workspace(self):
+        """project_ancestors (F36's own field, not part of the literal `orca`
+        shape in the acceptance) is derived via dispatch.is_ancestor_workspace:
+        a strict ancestor directory is included, the project's own path and
+        an unrelated path are not."""
+        nested = os.path.join(self.home, "nested", "child")
+        os.makedirs(nested, exist_ok=True)
+        unrelated = tempfile.mkdtemp(prefix="unrelated-")
+        self.addCleanup(shutil.rmtree, unrelated, ignore_errors=True)
+        self._write_config(projects=[{"name": "demo", "path": nested}])
+        self._set_orca_config({"repo_list": {"ok": True, "result": {"repos": [
+            {"id": "ancestor-repo", "displayName": "Ancestor", "path": self.home},
+            {"id": "self-repo", "displayName": "Self", "path": nested},
+            {"id": "unrelated-repo", "displayName": "Unrelated", "path": unrelated},
+        ]}}})
+
+        _, data = self._get("/api/state")
+
+        self.assertEqual(data["orca"]["project_ancestors"]["demo"], ["ancestor-repo"])
+
+    # -- POST /api/config: window + projects[].orca legal roundtrip --------
+    def test_post_config_window_and_projects_orca_roundtrip(self):
+        self._write_config(projects=[
+            {"name": "demo", "path": self.home},
+            {"name": "other", "path": self.orca_dir},
+        ])
+        self._set_orca_config({"repo_list": {"ok": True, "result": {"repos": [
+            {"id": "repo-1", "displayName": "Repo One", "path": self.home},
+        ]}}})
+
+        status, data = self._post("/api/config", {
+            "dispatch": {"window": "orca"},
+            "projects": [
+                {"name": "demo", "orca": {"mode": "bind", "repo_id": "repo-1"}},
+                {"name": "other", "orca": {"mode": "repo"}},
+            ],
+        })
+
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["config"]["dispatch"]["window"], "orca")
+        projects = {p["name"]: p for p in data["config"]["projects"]}
+        self.assertEqual(projects["demo"]["orca"], {"mode": "bind", "repo_id": "repo-1"})
+        self.assertEqual(projects["other"]["orca"], {"mode": "repo"})
+        self.assertEqual(data["warnings"], [])  # "other" registers fine, "demo" is bind-mode (skipped)
+
+        adds = [e for e in self._orca_log_entries() if e[:2] == ["repo", "add"]]
+        self.assertEqual(len(adds), 1)
+        self.assertEqual(adds[0][adds[0].index("--path") + 1], self.orca_dir)
+
+    # -- POST /api/config #4 (a)-(g): each -> 400, config.json untouched ----
+    def test_post_config_projects_not_array_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"projects": {"name": "demo"}})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    def test_post_config_projects_entry_unknown_field_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"projects": [
+            {"name": "demo", "orca": {"mode": "repo"}, "extra": 1}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    def test_post_config_projects_unknown_name_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"projects": [
+            {"name": "does-not-exist", "orca": {"mode": "repo"}}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    def test_post_config_projects_orca_not_object_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"projects": [{"name": "demo", "orca": "repo"}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    def test_post_config_projects_bad_mode_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"projects": [
+            {"name": "demo", "orca": {"mode": "weird"}}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    def test_post_config_projects_bind_missing_repo_id_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"projects": [
+            {"name": "demo", "orca": {"mode": "bind"}}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    def test_post_config_projects_bind_repo_id_not_in_orca_repo_list_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        self._set_orca_config({"repo_list": {"ok": True, "result": {"repos": []}}})
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"projects": [
+            {"name": "demo", "orca": {"mode": "bind", "repo_id": "ghost"}}]})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    def test_post_config_rejects_invalid_window_value_400_no_write(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        before = self._config_raw()
+        status, data = self._post("/api/config", {"dispatch": {"window": "popup"}})
+        self.assertEqual(status, 400)
+        self.assertFalse(data["ok"])
+        self.assertEqual(self._config_raw(), before)
+
+    # -- POST /api/config: orca repo add warnings ---------------------------
+    def test_post_config_orca_not_running_skips_repo_add_and_warns(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        self._set_orca_config({"status": {"ok": False, "error": {"code": "not_running"}}})
+
+        status, data = self._post("/api/config", {"dispatch": {"window": "orca"}})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(len(data["warnings"]), 1)
+        self.assertIn("not running", data["warnings"][0])
+        self.assertEqual(data["config"]["dispatch"]["window"], "orca")  # save still happened
+
+    def test_post_config_repo_add_failure_warns_but_save_succeeds(self):
+        self._write_config(projects=[{"name": "demo", "path": self.home}])
+        self._set_orca_config({"repo_add": {"ok": False, "error": {"code": "boom"}}})
+
+        status, data = self._post("/api/config", {"dispatch": {"window": "orca"}})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["warnings"]), 1)
+        self.assertIn("demo", data["warnings"][0])
+        self.assertEqual(data["config"]["dispatch"]["window"], "orca")
 
 
 if __name__ == "__main__":

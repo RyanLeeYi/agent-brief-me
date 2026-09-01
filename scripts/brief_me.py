@@ -7,12 +7,20 @@ Also implements `serve`: a stdlib http.server backend for scripts/brief_me.html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# F36: reuses dispatch.py's own run_orca()/is_ancestor_workspace() rather than
+# a second implementation. Resolves because scripts/ is always on sys.path
+# before this module is loaded - either Python auto-adds a directly-run
+# script's own directory (`python scripts/brief_me.py serve`), or every test
+# file here does `sys.path.insert(0, .../scripts)` before `import brief_me`.
+import dispatch
 
 # The inbox is UTF-8; on Windows, Python < 3.15 defaults stdout to the
 # locale code page (e.g. cp950), which mangles non-ASCII record content
@@ -491,6 +499,69 @@ _DISPATCHED_RE = re.compile(r"^(.+): dispatched$")
 _OPENED_WINDOW_RE = re.compile(r"^(.+): opened in new window$")
 
 
+def _orca_version(status_result):
+    """Best-effort version string from a successful `orca status --json`
+    result: `result.app.version`, falling back to a top-level
+    `result.version`. Neither location is documented anywhere else in this
+    repo, so both plausible shapes are checked; anything else (missing,
+    non-string) is None rather than raised on."""
+    result = status_result.get("result")
+    if not isinstance(result, dict):
+        return None
+    app = result.get("app")
+    if isinstance(app, dict) and isinstance(app.get("version"), str):
+        return app["version"]
+    version = result.get("version")
+    return version if isinstance(version, str) else None
+
+
+def _orca_repo_view(repo):
+    return {"id": repo.get("id"), "displayName": repo.get("displayName"), "path": repo.get("path")}
+
+
+def _project_orca_ancestors(projects, repos):
+    """(F36) {project_name: [repo_id, ...]} - the subset of `repos` (already
+    id/displayName/path-only views) that is a strict path-component ancestor
+    of that project's `path`, via dispatch.is_ancestor_workspace (reused,
+    not reimplemented - see docs/schema.md's Orca window dispatch section)."""
+    out = {}
+    for p in projects:
+        if not isinstance(p, dict) or not p.get("name"):
+            continue
+        path = p.get("path")
+        out[p["name"]] = [] if not path else [
+            r["id"] for r in repos
+            if r.get("id") and r.get("path") and dispatch.is_ancestor_workspace(r["path"], path)
+        ]
+    return out
+
+
+def _api_orca(config):
+    """orca object for GET /api/state (F36): available/running/version from
+    `orca status --json`, repos from `orca repo list --json`. Fail-open to
+    the "not usable" shape at each step - orca missing from PATH, the status
+    call failing/ok:false, or the repo list call failing/ok:false - per the
+    F36 acceptance's three-state contract."""
+    available = shutil.which("orca") is not None
+    running, version, repos = False, None, []
+    if available:
+        status = dispatch.run_orca(["status"])
+        running = bool(status.get("ok"))
+        if running:
+            version = _orca_version(status)
+            repo_list = dispatch.run_orca(["repo", "list"])
+            if repo_list.get("ok"):
+                raw_repos = repo_list.get("result", {}).get("repos", [])
+                repos = [_orca_repo_view(r) for r in raw_repos if isinstance(r, dict)]
+    return {
+        "available": available, "running": running, "version": version, "repos": repos,
+        # Not part of the F36 acceptance's literal `orca` shape, but the
+        # simplest place to carry the server-side ancestor computation the
+        # per-project "Open as" dropdown needs (see _project_orca_ancestors).
+        "project_ancestors": _project_orca_ancestors(config.get("projects", []), repos),
+    }
+
+
 def _api_state(brief_home):
     """GET /api/state: like `load` but never runs the collector
     (collector_warning is always null), plus `projects`,
@@ -522,6 +593,7 @@ def _api_state(brief_home):
 
     config = load_config(brief_home)
     payload["projects"] = [p["name"] for p in config.get("projects", [])]
+    payload["orca"] = _api_orca(config)  # F36
 
     unconsumed_counts = {}
     for qid, answer in answers_by_question.items():
@@ -1071,11 +1143,12 @@ def _validate_answer_body(body, questions):
 
 
 # F30: the only config.json fields the Settings view may write. Everything
-# else (projects, collector, notify, dispatch.permission_mode,
-# dispatch.allowed_tools) is read-only here - an unauthenticated local API
-# must not expose command execution (collector/notify are argv arrays) or
-# permission-escalating settings.
+# else (projects[] besides its F36 `orca` sub-object, collector, notify,
+# dispatch.permission_mode, dispatch.allowed_tools) is read-only here - an
+# unauthenticated local API must not expose command execution
+# (collector/notify are argv arrays) or permission-escalating settings.
 _PLAIN_LANGUAGE_VALUES = ("all", "refill", "off")
+_DISPATCH_WINDOW_VALUES = ("orca", "console")  # F36
 CONFIG_WRITABLE_DISPATCH_FIELDS = {
     "watch": bool,
     "delegate": bool,
@@ -1083,18 +1156,60 @@ CONFIG_WRITABLE_DISPATCH_FIELDS = {
     "context_model": (str, type(None)),
     "context_language": (str, type(None)),
     "plain_language": str,
+    "window": str,  # F36
 }
 
 
-def _validate_config_patch(body):
+def _validate_projects_patch(projects_patch, config):
+    """(F36) Validates POST /api/config's top-level `projects` key: each
+    element patches an existing project's `orca` sub-object only, by name.
+    A `mode: "bind"` entry's `repo_id` is checked against a live `orca repo
+    list` (never the client's possibly-stale copy) - one call for the whole
+    patch, not one per entry. Checked in full before any write happens, same
+    discipline as _validate_answer_body/_validate_config_patch."""
+    if not isinstance(projects_patch, list):
+        return "projects must be an array"
+    known_names = {p.get("name") for p in config.get("projects", []) if isinstance(p, dict)}
+    bind_repo_ids = []
+    for entry in projects_patch:
+        if not isinstance(entry, dict):
+            return "each projects[] entry must be an object"
+        unknown = [k for k in entry if k not in ("name", "orca")]
+        if unknown:
+            return f"unknown field in projects[] entry: {unknown[0]}"
+        name = entry.get("name")
+        if name not in known_names:
+            return f"unknown project: {name}"
+        orca_cfg = entry.get("orca")
+        if not isinstance(orca_cfg, dict):
+            return f"projects[].orca must be an object for {name}"
+        mode = orca_cfg.get("mode")
+        if mode not in ("repo", "bind"):
+            return f"projects[].orca.mode must be 'repo' or 'bind' for {name}"
+        if mode == "bind":
+            repo_id = orca_cfg.get("repo_id")
+            if not isinstance(repo_id, str) or not repo_id:
+                return f"projects[].orca.repo_id is required for bind mode ({name})"
+            bind_repo_ids.append(repo_id)
+    if bind_repo_ids:
+        result = dispatch.run_orca(["repo", "list"])
+        known_ids = {r.get("id") for r in result.get("result", {}).get("repos", [])} if result.get("ok") else set()
+        unknown_ids = [rid for rid in bind_repo_ids if rid not in known_ids]
+        if unknown_ids:
+            return f"orca repo_id not found: {unknown_ids[0]}"
+    return None
+
+
+def _validate_config_patch(body, config):
     """Returns an error string, or None if `body` is a valid POST /api/config
-    request (F30): only a top-level "dispatch" key, holding only the
-    whitelisted fields above, each of the right type (plain_language is
-    further restricted to its three known values). Checked in full before
-    any write happens, same discipline as _validate_answer_body."""
+    request (F30, extended by F36): a top-level "dispatch" key holding only
+    the whitelisted fields above, each of the right type (plain_language and
+    window are further restricted to their known values), plus an optional
+    top-level "projects" key (see _validate_projects_patch). Checked in full
+    before any write happens, same discipline as _validate_answer_body."""
     if not isinstance(body, dict):
         return "body must be a JSON object"
-    unknown_top = [k for k in body if k != "dispatch"]
+    unknown_top = [k for k in body if k not in ("dispatch", "projects")]
     if unknown_top:
         return f"unknown field: {unknown_top[0]}"
     patch = body.get("dispatch", {})
@@ -1108,18 +1223,26 @@ def _validate_config_patch(body):
             return f"dispatch.{key} has the wrong type"
         if key == "plain_language" and value not in _PLAIN_LANGUAGE_VALUES:
             return f"dispatch.plain_language must be one of {_PLAIN_LANGUAGE_VALUES}"
+        if key == "window" and value not in _DISPATCH_WINDOW_VALUES:
+            return f"dispatch.window must be one of {_DISPATCH_WINDOW_VALUES}"
+    if "projects" in body:
+        err = _validate_projects_patch(body["projects"], config)
+        if err:
+            return err
     return None
 
 
-def _apply_config_patch(brief_home, patch):
-    """Atomically rewrite config.json (F30) with `patch` merged into its
-    existing `dispatch` object: temp file + os.replace, same technique
+def _apply_config_patch(brief_home, patch, projects_patch=None):
+    """Atomically rewrite config.json (F30, extended by F36) with `patch`
+    merged into its existing `dispatch` object, and (if given) each
+    projects_patch entry's `orca` sub-object merged into the matching
+    config["projects"] entry by name: temp file + os.replace, same technique
     dispatch.py's ensure_trusted() uses for claude.json - config.json is a
     single JSON document, not an append-only JSONL file, so the atomic
-    append rule does not apply here. Every top-level key besides `dispatch`,
-    and every dispatch.* key outside the F30 whitelist, is preserved
-    byte-for-byte (re-serialized, not re-ordered-checked, but never
-    dropped)."""
+    append rule does not apply here. Every top-level key besides `dispatch`
+    and `projects`, every dispatch.* key outside the F30/F36 whitelist, and
+    every project not named in projects_patch, is preserved byte-for-byte
+    (re-serialized, not re-ordered-checked, but never dropped)."""
     path = os.path.join(brief_home, "config.json")
     config = load_config(brief_home)
     if not isinstance(config, dict):
@@ -1128,6 +1251,14 @@ def _apply_config_patch(brief_home, patch):
     if not isinstance(existing_dispatch, dict):
         existing_dispatch = {}
     config["dispatch"] = {**existing_dispatch, **patch}
+
+    if projects_patch:
+        orca_by_name = {entry["name"]: entry["orca"] for entry in projects_patch}
+        config["projects"] = [
+            {**p, "orca": orca_by_name[p["name"]]}
+            if isinstance(p, dict) and p.get("name") in orca_by_name else p
+            for p in config.get("projects", [])
+        ]
 
     fd, tmp_path = tempfile.mkstemp(dir=brief_home, prefix=".config-")
     try:
@@ -1140,6 +1271,26 @@ def _apply_config_patch(brief_home, patch):
         except OSError:
             pass
         raise
+
+
+def _register_orca_repo_projects(config):
+    """(F36) `orca repo add --path <path>` for every repo-mode project (a
+    missing/non-bind `orca` sub-object), once a POST /api/config save leaves
+    dispatch.window == "orca". Never blocks the save that already happened -
+    a failure, or Orca not running at all, only adds a line to the returned
+    warnings list; the caller surfaces those via the existing toast-warning
+    path, same as any other non-fatal dispatch warning."""
+    if not bool(dispatch.run_orca(["status"]).get("ok")):
+        return ["Orca is not running; skipped registering projects with orca repo add."]
+    warnings = []
+    for project in config.get("projects", []):
+        orca_cfg = project.get("orca")
+        if isinstance(orca_cfg, dict) and orca_cfg.get("mode") == "bind":
+            continue
+        result = dispatch.run_orca(["repo", "add", "--path", project.get("path", "")])
+        if not result.get("ok"):
+            warnings.append(f"Could not register {project.get('name')} with Orca: {result.get('error')}")
+    return warnings
 
 
 class BriefHTTPHandler(BaseHTTPRequestHandler):
@@ -1286,22 +1437,30 @@ class BriefHTTPHandler(BaseHTTPRequestHandler):
         self._json(200 if result.get("ok") else 400, result)
 
     def _post_config(self):
-        """POST /api/config {"dispatch": {...whitelisted fields...}} (F30):
-        rewrite config.json's dispatch settings. Any unknown top-level key,
-        unknown/read-only dispatch.* key, or wrong-typed value is a 400 with
-        no write at all; a valid patch is applied atomically and the current
-        (post-write) config is echoed back."""
+        """POST /api/config {"dispatch": {...whitelisted fields...},
+        "projects": [{"name", "orca"}...]} (F30, extended by F36): rewrite
+        config.json's dispatch settings and, optionally, named projects'
+        `orca` sub-object. Any unknown top-level key, unknown/read-only
+        dispatch.* key, wrong-typed value, or invalid projects[] entry is a
+        400 with no write at all; a valid patch is applied atomically and
+        the current (post-write) config is echoed back, plus `warnings`
+        (F36: `orca repo add` results - see _register_orca_repo_projects)."""
         body, err = self._read_json_body()
         if err:
             self._json(400, {"ok": False, "error": err})
             return
-        err = _validate_config_patch(body)
+        brief_home = get_brief_home()
+        config = load_config(brief_home)
+        err = _validate_config_patch(body, config)
         if err:
             self._json(400, {"ok": False, "error": err})
             return
-        brief_home = get_brief_home()
-        _apply_config_patch(brief_home, body.get("dispatch", {}))
-        self._json(200, {"ok": True, "config": load_config(brief_home)})
+        _apply_config_patch(brief_home, body.get("dispatch", {}), body.get("projects"))
+        new_config = load_config(brief_home)
+        warnings = []
+        if (new_config.get("dispatch") or {}).get("window") == "orca":
+            warnings = _register_orca_repo_projects(new_config)
+        self._json(200, {"ok": True, "config": new_config, "warnings": warnings})
 
     def _post_answer(self):
         body, err = self._read_json_body()

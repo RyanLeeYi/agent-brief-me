@@ -2039,6 +2039,10 @@
     refreshBtnEl.disabled = true;
     refreshBtnEl.classList.add('refreshing');
     refreshBtnEl.title = 'Refreshing...';
+    // The "since refresh" suffix describes the previous refresh; any new
+    // Refresh (successful or not) supersedes it, so clear it up front.
+    state.sinceRefresh = null;
+    updateHeader();
     apiPost('/api/collect', {}).then(function (res) {
       if (res.collector_warning) toast(res.collector_warning, 'warning');
       return reloadState();

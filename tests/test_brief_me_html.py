@@ -784,6 +784,12 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(page.locator("#header-counts")).not_to_contain_text("since refresh")
     print("scene: F37 no new items since the last refresh -> zero counts, no header suffix - OK")
 
+    # A failed Refresh must still clear the previous refresh's header suffix.
+    append_line(os.path.join(brief_home, "inbox.jsonl"),
+                make_question(PROJECT, "New before failing refresh", ["A", "B"]))
+    refresh_btn.click()
+    expect(refresh_btn).not_to_be_disabled()
+    expect(page.locator("#header-counts")).to_contain_text("+1 questions since refresh")
     collect_fail_path = os.path.join(brief_home, "collect_fail.json")
     write_json(collect_fail_path, {"error": "boom"})
     refresh_btn.click()
@@ -791,8 +797,9 @@ def run_scenes(page, base_url, brief_home, fx):
     expect(refresh_btn).to_have_class("btn btn-icon")
     expect(refresh_btn).to_have_attribute("title", "Refresh")
     expect(page.locator(".toast").last).to_have_text("Refresh failed: boom")
+    expect(page.locator("#header-counts")).not_to_contain_text("since refresh")
     os.remove(collect_fail_path)
-    print("scene: F37 /api/collect failure reverts the button and shows an error toast - OK")
+    print("scene: F37 /api/collect failure reverts the button, shows an error toast, clears the suffix - OK")
 
 
 if __name__ == "__main__":
